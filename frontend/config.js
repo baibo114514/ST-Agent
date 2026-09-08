@@ -5,6 +5,9 @@
 //   - 本地开发（前端 5174 / 后端 8000 分离）：填 "http://127.0.0.1:8000"。
 //
 // 浏览器右上角「API」框手动填写的值会存到 localStorage，优先于此文件。
+// window.APP_CONFIG = {
+//   apiBase: "",
+// };
 window.APP_CONFIG = {
-  apiBase: "",
+  apiBase: "http://127.0.0.1:8000",
 };
