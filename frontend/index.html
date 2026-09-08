@@ -1,0 +1,664 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>FastGraph Agent Console</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <div class="brand">
+          <span class="brand-mark" aria-hidden="true">FG</span>
+          <div>
+            <strong>FastGraph Agent Console</strong>
+            <small>Agent Catalog · Knowledge Service · Runtime</small>
+          </div>
+        </div>
+        <div class="connection-bar">
+          <label>
+            <span>API</span>
+            <input id="apiBaseInput" type="url" spellcheck="false" />
+          </label>
+          <button class="icon-button" data-action="save-api" title="保存 API 地址">
+            <span aria-hidden="true">✓</span>
+          </button>
+          <button class="icon-button" data-action="logout" title="退出登录">
+            <span aria-hidden="true">×</span>
+          </button>
+        </div>
+      </header>
+
+      <main class="workspace">
+        <section id="authPanel" class="auth-panel">
+          <div class="auth-copy">
+            <h1>登录控制台</h1>
+            <p>平台管理员维护 Agent 和知识库，普通用户调用已发布 Agent。</p>
+          </div>
+          <form id="authForm" class="auth-form">
+            <div class="field">
+              <label for="emailInput">邮箱</label>
+              <input id="emailInput" type="email" autocomplete="username" required />
+            </div>
+            <div class="field">
+              <label for="passwordInput">密码</label>
+              <input id="passwordInput" type="password" autocomplete="current-password" required />
+            </div>
+            <div class="form-actions">
+              <button type="submit" class="primary-button" data-auth-mode="login">
+                <span aria-hidden="true">→</span>
+                登录
+              </button>
+              <button type="submit" class="secondary-button" data-auth-mode="register">
+                <span aria-hidden="true">+</span>
+                注册
+              </button>
+            </div>
+          </form>
+        </section>
+
+        <section id="consolePanel" class="console-panel hidden">
+          <div class="console-layout">
+            <aside class="app-sidebar">
+              <div class="sidebar-head">
+                <span class="eyebrow">Workspace</span>
+                <strong>控制台</strong>
+              </div>
+              <nav class="side-nav" aria-label="控制台视图">
+                <button class="side-nav-item active" data-view="user">
+                  <span class="nav-icon" aria-hidden="true">●</span>
+                  <span>用户调用</span>
+                  <small>调用已发布 Agent</small>
+                </button>
+                <button class="side-nav-item" data-view="agents">
+                  <span class="nav-icon" aria-hidden="true">◆</span>
+                  <span>Agent 配置</span>
+                  <small>管理模型与知识库</small>
+                </button>
+                <button class="side-nav-item" data-view="knowledge">
+                  <span class="nav-icon" aria-hidden="true">■</span>
+                  <span>知识库</span>
+                  <small>上传文档与检索预览</small>
+                </button>
+              </nav>
+              <div class="sidebar-foot">
+                <span>FastGraph Agent Engine</span>
+                <small>本地开发控制台</small>
+              </div>
+            </aside>
+
+            <main class="console-main">
+              <section id="userView" class="console-page view-grid user-grid">
+            <aside class="panel agent-list-panel">
+              <div class="panel-head">
+                <div>
+                  <h2>可用 Agent</h2>
+                  <p id="userIdentity"></p>
+                </div>
+                <button class="icon-button" data-action="refresh-user-agents" title="刷新 Agent">
+                  <span aria-hidden="true">↻</span>
+                </button>
+              </div>
+              <div class="panel-section">
+                <div class="section-head">
+                  <strong>Agent</strong>
+                  <span id="agentListMeta"></span>
+                </div>
+                <div id="userAgentList" class="stack-list compact-list"></div>
+              </div>
+              <div class="panel-section session-section">
+                <div class="section-head">
+                  <strong>会话</strong>
+                  <button class="icon-button small-button" data-action="refresh-sessions" title="刷新会话">
+                    <span aria-hidden="true">↻</span>
+                  </button>
+                </div>
+                <div id="userSessionList" class="stack-list compact-list"></div>
+              </div>
+            </aside>
+
+            <section class="panel chat-panel">
+              <div class="panel-head">
+                <div>
+                  <h2 id="activeAgentTitle">选择 Agent</h2>
+                  <p id="activeAgentMeta"></p>
+                  <p id="activeSessionMeta"></p>
+                </div>
+                <button class="secondary-button" data-action="new-session">
+                  <span aria-hidden="true">+</span>
+                  新会话
+                </button>
+                <button class="secondary-button" data-action="clear-chat-history">
+                  <span aria-hidden="true">⌫</span>
+                  清空记录
+                </button>
+              </div>
+              <div id="messageList" class="message-list"></div>
+              <form id="chatForm" class="composer">
+                <textarea id="chatInput" rows="4" placeholder="输入消息"></textarea>
+                <button class="primary-button" type="submit">
+                  <span aria-hidden="true">↑</span>
+                  发送
+                </button>
+              </form>
+            </section>
+          </section>
+
+          <section id="agentAdminView" class="console-page agent-page hidden">
+              <aside class="panel agent-catalog-panel">
+                <div class="agent-panel-head">
+                  <div class="agent-panel-copy">
+                    <h1>Agent 配置</h1>
+                    <p>维护面向用户开放的 Agent、模型、角色说明和知识库绑定。</p>
+                  </div>
+                  <div class="agent-panel-actions">
+                    <button class="secondary-button" data-action="refresh-admin">
+                      <span aria-hidden="true">↻</span>
+                      刷新
+                    </button>
+                    <button class="primary-button" data-action="reset-agent-form">
+                      <span aria-hidden="true">+</span>
+                      新建 Agent
+                    </button>
+                  </div>
+                </div>
+                <div class="agent-catalog-meta">
+                  <strong>Agent Catalog</strong>
+                  <p id="agentAdminStatus"></p>
+                </div>
+                <div id="platformAgentList" class="data-list agent-catalog-list"></div>
+              </aside>
+
+              <section class="panel agent-editor-panel">
+                <div class="panel-head">
+                  <div>
+                    <h2>配置表单</h2>
+                    <p>发布后普通用户可在调用界面选择。</p>
+                  </div>
+                  <div class="form-actions panel-form-actions">
+                    <button type="submit" class="primary-button" form="agentForm">
+                      <span aria-hidden="true">✓</span>
+                      保存 Agent
+                    </button>
+                    <button type="button" class="secondary-button" data-action="reset-agent-form">
+                      <span aria-hidden="true">↺</span>
+                      清空
+                    </button>
+                  </div>
+                </div>
+                <form id="agentForm" class="admin-form agent-form">
+                  <input id="agentIdInput" type="hidden" />
+                  <div class="form-row two-cols">
+                    <div class="field">
+                      <label for="agentCodeInput">编码</label>
+                      <input id="agentCodeInput" placeholder="customer-service" required />
+                    </div>
+                    <div class="field">
+                      <label for="agentNameInput">名称</label>
+                      <input id="agentNameInput" required />
+                    </div>
+                  </div>
+                  <div class="field">
+                    <label for="agentDescriptionInput">用途</label>
+                    <input id="agentDescriptionInput" />
+                  </div>
+                  <div class="field">
+                    <label for="agentModelInput">模型</label>
+                    <input id="agentModelInput" placeholder="deepseek-chat" required />
+                  </div>
+                  <div class="field">
+                    <label for="agentRoleInput">角色说明</label>
+                    <textarea id="agentRoleInput" rows="6" required></textarea>
+                  </div>
+                  <fieldset class="fieldset">
+                    <legend>工具</legend>
+                    <label><input id="featureWebSearch" type="checkbox" />联网搜索</label>
+                    <label><input id="featureCode" type="checkbox" />代码解释器</label>
+                    <label><input id="featureMemory" type="checkbox" />长期记忆</label>
+                    <label><input id="featureEmail" type="checkbox" />邮件助手</label>
+                  </fieldset>
+                  <fieldset class="fieldset knowledge-fieldset">
+                    <legend>知识库</legend>
+                    <label class="inline-check"><input id="knowledgeEnabledInput" type="checkbox" />启用检索</label>
+                    <div class="knowledge-config-fields">
+                      <div class="field">
+                        <span id="agentKbSelectLabel">绑定知识库</span>
+                        <div
+                          id="agentKbSelect"
+                          class="agent-kb-select"
+                          role="group"
+                          aria-labelledby="agentKbSelectLabel"
+                        ></div>
+                      </div>
+                      <div class="knowledge-params-grid">
+                        <div class="field">
+                          <label for="agentTopKInput">Top K</label>
+                          <input id="agentTopKInput" type="number" min="1" max="20" value="5" />
+                        </div>
+                        <div class="field">
+                          <label for="agentScoreInput">最低分数</label>
+                          <input id="agentScoreInput" type="number" min="0" step="0.01" value="0" />
+                        </div>
+                      </div>
+                    </div>
+                  </fieldset>
+                </form>
+              </section>
+          </section>
+
+          <section id="knowledgeAdminView" class="console-page knowledge-page hidden">
+              <aside class="panel kb-panel">
+                <div class="kb-panel-head">
+                  <div class="kb-panel-copy">
+                    <h1>公共知识库</h1>
+                    <p>平台级公共知识统一入库、检索预览和任务排障。</p>
+                  </div>
+                  <div class="kb-panel-actions">
+                    <label class="switch-row">
+                      <input id="includeArchivedInput" type="checkbox" />
+                      显示归档
+                    </label>
+                    <button class="secondary-button" data-action="refresh-knowledge">
+                      <span aria-hidden="true">↻</span>
+                      刷新
+                    </button>
+                    <button class="primary-button" data-action="reset-kb-form">
+                      <span aria-hidden="true">+</span>
+                      新建知识库
+                    </button>
+                  </div>
+                </div>
+                <div class="kb-filter">
+                  <label class="field">
+                    <span>搜索知识库</span>
+                    <input id="kbKeywordInput" placeholder="输入名称、Namespace 或说明" />
+                  </label>
+                  <p id="knowledgeStatus"></p>
+                </div>
+                <div id="knowledgeBaseList" class="kb-list"></div>
+                <div class="pager" id="knowledgePager">
+                  <button class="icon-button" data-action="kb-prev-page" title="上一页" aria-label="上一页">
+                    <span aria-hidden="true">‹</span>
+                  </button>
+                  <span id="knowledgePagerInfo" class="pager-info"></span>
+                  <button class="icon-button" data-action="kb-next-page" title="下一页" aria-label="下一页">
+                    <span aria-hidden="true">›</span>
+                  </button>
+                </div>
+              </aside>
+
+              <main class="panel knowledge-work-panel">
+                <div id="kbEmptyState" class="empty knowledge-empty">选择或新建一个公共知识库</div>
+                <section id="kbDetailPanel" class="kb-detail-panel hidden">
+                  <div class="detail-head">
+                    <div>
+                      <div class="detail-title">
+                        <h2 id="selectedKbTitle">选择知识库</h2>
+                        <span id="selectedKbNamespace" class="badge"></span>
+                        <span id="selectedKbStatus" class="badge"></span>
+                      </div>
+                      <p id="selectedKbDescription"></p>
+                    </div>
+                    <div class="detail-actions">
+                      <button class="secondary-button" data-action="edit-kb">编辑</button>
+                      <button id="archiveKbButton" class="secondary-button danger-action" data-action="archive-kb">归档</button>
+                      <button id="restoreKbButton" class="secondary-button" data-action="restore-kb">恢复</button>
+                      <button class="secondary-button danger-action" data-action="delete-kb">删除</button>
+                      <button class="primary-button" data-kb-tab="upload">
+                        <span aria-hidden="true">↑</span>
+                        入库
+                      </button>
+                    </div>
+                  </div>
+
+                  <section class="metric-grid">
+                    <div>
+                      <small>文档</small>
+                      <strong id="kbDocsMetric">0</strong>
+                    </div>
+                    <div>
+                      <small>Chunks</small>
+                      <strong id="kbChunksMetric">0</strong>
+                    </div>
+                    <div>
+                      <small>失败任务</small>
+                      <strong id="kbFailedJobsMetric">0</strong>
+                    </div>
+                    <div>
+                      <small>更新</small>
+                      <strong id="kbUpdatedMetric">-</strong>
+                    </div>
+                  </section>
+
+                  <nav class="detail-tabs" aria-label="知识库详情">
+                    <button class="detail-tab active" data-kb-tab="documents">文档</button>
+                    <button class="detail-tab" data-kb-tab="jobs">入库任务</button>
+                    <button class="detail-tab" data-kb-tab="search">搜索预览</button>
+                    <button class="detail-tab" data-kb-tab="metadata">元数据提取</button>
+                    <button class="detail-tab" data-kb-tab="upload">文档上传</button>
+                  </nav>
+
+                  <section class="kb-tab-panel" data-kb-panel="documents">
+                    <div class="tab-toolbar">
+                      <input id="documentKeywordInput" placeholder="筛选标题、来源、摘要" />
+                      <select id="documentSourceFilter" aria-label="文档来源">
+                        <option value="all">全部来源</option>
+                        <option value="file">文件</option>
+                        <option value="url">URL</option>
+                        <option value="qa">QA</option>
+                      </select>
+                      <button class="secondary-button" data-action="refresh-documents">
+                        <span aria-hidden="true">↻</span>
+                        刷新
+                      </button>
+                    </div>
+                    <div class="pager" id="documentPager">
+                      <button class="icon-button" data-action="document-prev-page" title="上一页" aria-label="上一页">
+                        <span aria-hidden="true">‹</span>
+                      </button>
+                      <span id="documentPagerInfo" class="pager-info"></span>
+                      <button class="icon-button" data-action="document-next-page" title="下一页" aria-label="下一页">
+                        <span aria-hidden="true">›</span>
+                      </button>
+                    </div>
+                    <div id="documentList" class="data-list knowledge-table-list"></div>
+                  </section>
+
+                  <section class="kb-tab-panel hidden" data-kb-panel="jobs">
+                    <div class="tab-toolbar">
+                      <select id="jobStatusFilter" aria-label="任务状态">
+                        <option value="">全部状态</option>
+                        <option value="queued">queued</option>
+                        <option value="running">running</option>
+                        <option value="completed">completed</option>
+                        <option value="partial_completed">partial_completed</option>
+                        <option value="failed">failed</option>
+                        <option value="canceled">canceled</option>
+                      </select>
+                      <button class="secondary-button" data-action="refresh-jobs">
+                        <span aria-hidden="true">↻</span>
+                        刷新
+                      </button>
+                      <button class="secondary-button danger-action" data-action="clear-jobs">
+                        <span aria-hidden="true">⌫</span>
+                        清空已结束任务
+                      </button>
+                    </div>
+                    <div id="jobList" class="data-list knowledge-table-list"></div>
+                    <div class="pager" id="jobPager">
+                      <button class="icon-button" data-action="job-prev-page" title="上一页" aria-label="上一页">
+                        <span aria-hidden="true">‹</span>
+                      </button>
+                      <span id="jobPagerInfo" class="pager-info"></span>
+                      <button class="icon-button" data-action="job-next-page" title="下一页" aria-label="下一页">
+                        <span aria-hidden="true">›</span>
+                      </button>
+                    </div>
+                  </section>
+
+                  <section class="kb-tab-panel hidden" data-kb-panel="search">
+                    <div class="search-panel">
+                      <div class="search-bar">
+                        <input id="searchInput" placeholder="输入关键词进行检索预览" />
+                        <input id="searchTopKInput" type="number" min="1" max="20" value="5" />
+                        <button class="primary-button" data-action="search-knowledge">
+                          <span aria-hidden="true">⌕</span>
+                          搜索
+                        </button>
+                      </div>
+                      <div id="searchResults" class="search-results"></div>
+                    </div>
+                  </section>
+
+                  <section class="kb-tab-panel hidden" data-kb-panel="metadata">
+                    <form id="metadataExtractionForm" class="ingest-panel metadata-extraction-panel">
+                      <div class="section-heading">
+                        <div>
+                          <h3>元数据提取</h3>
+                          <p class="helper-line">按当前知识库配置，从文档前部提取任意键值字段并保存到 metadataJson。</p>
+                        </div>
+                        <label class="switch-row">
+                          <input id="metadataExtractionEnabledInput" type="checkbox" />
+                          启用提取
+                        </label>
+                      </div>
+                      <div class="form-row two-cols">
+                        <div class="field">
+                          <label for="metadataExtractionSchemaNameInput">Schema 名称</label>
+                          <input id="metadataExtractionSchemaNameInput" value="generic" maxlength="64" />
+                        </div>
+                        <div class="field">
+                          <label for="metadataExtractionSchemaVersionInput">Schema 版本</label>
+                          <input id="metadataExtractionSchemaVersionInput" value="1" maxlength="32" />
+                        </div>
+                      </div>
+                      <div class="metadata-config-section">
+                        <div class="metadata-config-head">
+                          <div>
+                            <h4>字段映射</h4>
+                            <p class="helper-line">把文档中的原始字段放入统一的 common 或 domain 路径。</p>
+                          </div>
+                          <button type="button" class="secondary-button" data-action="add-metadata-mapping">
+                            <span aria-hidden="true">+</span>
+                            新增字段
+                          </button>
+                        </div>
+                        <div class="metadata-table-wrap">
+                          <table class="metadata-config-table">
+                            <thead>
+                              <tr>
+                                <th>原始字段名</th>
+                                <th>目标路径</th>
+                                <th>值类型</th>
+                                <th aria-label="操作"></th>
+                              </tr>
+                            </thead>
+                            <tbody id="metadataMappingsTable"></tbody>
+                          </table>
+                        </div>
+                        <p id="metadataMappingsEmpty" class="metadata-table-empty">暂未配置字段映射</p>
+                      </div>
+                      <div class="metadata-config-section">
+                        <div class="metadata-config-head">
+                          <div>
+                            <h4>默认字段</h4>
+                            <p class="helper-line">仅当文档没有提取到对应字段时写入默认值。</p>
+                          </div>
+                          <button type="button" class="secondary-button" data-action="add-metadata-default">
+                            <span aria-hidden="true">+</span>
+                            新增默认值
+                          </button>
+                        </div>
+                        <div class="metadata-table-wrap">
+                          <table class="metadata-config-table metadata-defaults-table">
+                            <thead>
+                              <tr>
+                                <th>目标路径</th>
+                                <th>默认值（JSON）</th>
+                                <th aria-label="操作"></th>
+                              </tr>
+                            </thead>
+                            <tbody id="metadataDefaultsTable"></tbody>
+                          </table>
+                        </div>
+                        <p id="metadataDefaultsEmpty" class="metadata-table-empty">暂未配置默认字段</p>
+                      </div>
+                      <div class="form-row two-cols">
+                        <div class="field">
+                          <label for="metadataExtractionFormatInput">提取格式</label>
+                          <select id="metadataExtractionFormatInput">
+                            <option value="markdown_fields">Markdown 字段头</option>
+                            <option value="yaml_front_matter">YAML front matter</option>
+                            <option value="none">不提取</option>
+                          </select>
+                        </div>
+                        <div class="field">
+                          <label for="metadataExtractionMaxLinesInput">最多扫描行数</label>
+                          <input id="metadataExtractionMaxLinesInput" type="number" min="10" max="500" value="100" />
+                        </div>
+                      </div>
+                      <label class="inline-check">
+                        <input id="metadataExtractionStripInput" type="checkbox" />
+                        从正文和向量内容中剥离已提取的头部字段
+                      </label>
+                      <label class="inline-check">
+                        <input id="metadataExtractionKeepUnmappedInput" type="checkbox" checked />
+                        将未映射字段保留在 domain
+                      </label>
+                      <p id="metadataExtractionStatus" class="helper-line"></p>
+                      <div class="form-actions">
+                        <button class="primary-button" type="submit">
+                          <span aria-hidden="true">✓</span>
+                          保存提取配置
+                        </button>
+                      </div>
+                    </form>
+                  </section>
+
+                  <section class="kb-tab-panel hidden" data-kb-panel="upload">
+                    <form id="uploadForm" class="ingest-panel">
+                      <div class="mode-switch" role="tablist" aria-label="上传模式">
+                        <button type="button" class="segmented-button active" data-upload-mode="file">文件</button>
+                        <button type="button" class="segmented-button" data-upload-mode="directory">目录</button>
+                      </div>
+                      <div class="upload-picker" data-upload-panel="file">
+                        <label class="file-input-card">
+                          <span>选择文件</span>
+                          <small>支持 PDF、txt、md、csv、json、html、log</small>
+                          <input id="uploadFileInput" type="file" multiple accept=".pdf,.txt,.md,.markdown,.csv,.json,.html,.htm,.log,text/*,application/pdf" />
+                        </label>
+                      </div>
+                      <div class="upload-picker hidden" data-upload-panel="directory">
+                        <label class="file-input-card">
+                          <span>选择目录</span>
+                          <small>会保留浏览器提供的相对路径作为来源</small>
+                          <input id="uploadDirectoryInput" type="file" webkitdirectory directory multiple accept=".pdf,.txt,.md,.markdown,.csv,.json,.html,.htm,.log,text/*,application/pdf" />
+                        </label>
+                      </div>
+                      <div class="form-row two-cols">
+                        <div class="field">
+                          <label for="uploadTitleInput">单文件标题</label>
+                          <input id="uploadTitleInput" placeholder="可选，目录上传时自动使用文件名" />
+                        </div>
+                        <div class="field">
+                          <label for="uploadSourceRefInput">来源备注/批次前缀</label>
+                          <input id="uploadSourceRefInput" placeholder="例如 policy/2026" />
+                        </div>
+                      </div>
+                      <div class="form-actions">
+                        <button class="primary-button" type="submit">
+                          <span aria-hidden="true">↑</span>
+                          上传并入库
+                        </button>
+                      </div>
+                      <p id="uploadStatus" class="helper-line"></p>
+                    </form>
+                  </section>
+                </section>
+              </main>
+              </section>
+            </main>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <div id="kbEditorDrawer" class="drawer-backdrop hidden">
+      <aside class="drawer-panel" role="dialog" aria-modal="true" aria-labelledby="kbEditorTitle">
+        <header class="drawer-head">
+          <div>
+            <span class="eyebrow">Knowledge base</span>
+            <h2 id="kbEditorTitle">新建知识库</h2>
+          </div>
+          <button class="icon-button" data-action="close-kb-editor" title="关闭">
+            <span aria-hidden="true">×</span>
+          </button>
+        </header>
+        <form id="kbForm" class="drawer-form">
+          <input id="kbIdInput" type="hidden" />
+          <div class="field">
+            <label for="kbNamespaceInput">Namespace</label>
+            <select id="kbNamespaceInput">
+              <option value="default">default</option>
+              <option value="policy">policy</option>
+              <option value="customer_service">customer_service</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="kbNameInput">名称</label>
+            <input id="kbNameInput" required maxlength="80" />
+          </div>
+          <div class="field">
+            <label for="kbDescriptionInput">说明</label>
+            <textarea id="kbDescriptionInput" rows="5" maxlength="500"></textarea>
+          </div>
+          <div class="field">
+            <label for="kbStrategyInput">检索算法</label>
+            <select id="kbStrategyInput">
+              <option value="">默认（全局）</option>
+              <option value="vector">vector · 向量检索</option>
+              <option value="vector_reranker">vector_reranker · 向量检索 + 重排</option>
+              <option value="weighted">weighted · 元数据加权排序</option>
+              <option value="weighted_reranker">weighted_reranker · 加权排序 + 重排</option>
+              <option value="hybrid">hybrid · 混合检索</option>
+              <option value="hybrid_reranker">hybrid_reranker · 混合检索 + 重排</option>
+              <option value="keyword">keyword · 关键词检索</option>
+              <option value="fulltext">fulltext · 全文检索</option>
+              <option value="keyword_rank">keyword_rank · 规则重排</option>
+            </select>
+          </div>
+          <div class="field">
+            <label class="switch-row">
+              <input id="kbWebFallbackInput" type="checkbox" />
+              <span>未命中时联网搜索兜底</span>
+            </label>
+            <p class="helper-line">检索无结果或相关度低时，用联网搜索补充。敏感知识库建议关闭。</p>
+          </div>
+          <p class="helper-line">创建后可在“元数据提取”标签中配置文档头部字段的解析方式。</p>
+          <div class="form-actions">
+            <button type="button" class="secondary-button" data-action="close-kb-editor">取消</button>
+            <button class="primary-button" type="submit">
+              <span aria-hidden="true">✓</span>
+              保存
+            </button>
+          </div>
+        </form>
+      </aside>
+    </div>
+
+    <div id="documentDrawer" class="drawer-backdrop hidden">
+      <aside class="drawer-panel" role="dialog" aria-modal="true" aria-labelledby="documentDrawerTitle">
+        <header class="drawer-head">
+          <div>
+            <span class="eyebrow">Document</span>
+            <h2 id="documentDrawerTitle">文档详情</h2>
+          </div>
+          <button class="icon-button" data-action="close-document-drawer" title="关闭">
+            <span aria-hidden="true">×</span>
+          </button>
+        </header>
+        <div id="documentDetailContent" class="drawer-content"></div>
+      </aside>
+    </div>
+
+    <div id="jobDrawer" class="drawer-backdrop hidden">
+      <aside class="drawer-panel" role="dialog" aria-modal="true" aria-labelledby="jobDrawerTitle">
+        <header class="drawer-head">
+          <div>
+            <span class="eyebrow">Ingest job</span>
+            <h2 id="jobDrawerTitle">任务详情</h2>
+          </div>
+          <button class="icon-button" data-action="close-job-drawer" title="关闭">
+            <span aria-hidden="true">×</span>
+          </button>
+        </header>
+        <div id="jobDetailContent" class="drawer-content"></div>
+      </aside>
+    </div>
+
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+    <script src="./config.js"></script>
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>

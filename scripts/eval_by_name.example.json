@@ -1,0 +1,47 @@
+{
+  "output_dir": "../services/evaluation_service/results/retrieval",
+  "datasets": [
+    {
+      "name": "客服-推荐回归",
+      "namespace": "service",
+      "kb_name": "客服文件类知识库",
+      "cases": "../services/evaluation_service/data/customer_service/questions/retrieval_smoke.jsonl",
+      "strategies": [
+        "vector",
+        "vector_reranker",
+        "weighted",
+        "weighted_reranker",
+        "hybrid",
+        "hybrid_reranker",
+        "keyword",
+        "fulltext",
+        "keyword_rank"
+      ]
+    },
+    {
+      "name": "政策-冒烟",
+      "namespace": "policy",
+      "kb_name": "武创通政策文件类知识库",
+      "cases": "../services/evaluation_service/data/policies/questions/retrieval_smoke.jsonl",
+      "strategies": ["vector", "weighted"],
+      "limit": 8
+    },
+    {
+      "name": "政策-业务场景",
+      "namespace": "policy",
+      "kb_name": "武创通政策文件类知识库",
+      "cases": "../services/evaluation_service/data/policies/questions/retrieval_business.jsonl",
+      "strategies": [
+        "vector",
+        "vector_reranker",
+        "weighted",
+        "weighted_reranker",
+        "hybrid",
+        "hybrid_reranker",
+        "keyword",
+        "fulltext",
+        "keyword_rank"
+      ]
+    }
+  ]
+}

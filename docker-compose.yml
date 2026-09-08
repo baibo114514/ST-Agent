@@ -1,0 +1,171 @@
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    environment:
+      - POSTGRES_DB=${POSTGRES_DB}
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: always
+    networks:
+      - monitoring
+
+  # ======================================================================
+  # 混合开发约定：Docker 只跑基础设施。
+  # - frontend:          宿主机 http://127.0.0.1:5174
+  # - backend/control:   宿主机 http://127.0.0.1:8000
+  # - knowledge-service: 宿主机 http://127.0.0.1:8010
+  # - db: Docker
+  # ======================================================================
+
+  # Local OpenAI-compatible embedding provider.
+  # Pull the model once with:
+  #   docker compose --env-file .env.development exec ollama ollama pull bge-m3
+  ollama:
+    image: ollama/ollama:latest
+    ports:
+      - "11434:11434"
+    environment:
+      - OLLAMA_HOST=0.0.0.0:11434
+    volumes:
+      - ollama-data:/root/.ollama
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    restart: always
+    networks:
+      - monitoring
+
+  # ==================== Optional Langfuse v3 self-hosting ====================
+  # Development defaults to Langfuse Cloud. Start these only with:
+  #   docker compose --profile local-langfuse --env-file .env.development up -d langfuse-server langfuse-worker
+  # Langfuse v3 需要 postgres + clickhouse + redis + minio 四个依赖服务。
+  # Web UI 映射到宿主机 3001。
+  langfuse-db:
+    image: postgres:16-alpine
+    profiles: ["local-langfuse"]
+    environment:
+      - POSTGRES_USER=langfuse
+      - POSTGRES_PASSWORD=langfuse
+      - POSTGRES_DB=langfuse
+    volumes:
+      - langfuse-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U langfuse"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - monitoring
+
+  langfuse-clickhouse:
+    image: clickhouse/clickhouse-server:24
+    profiles: ["local-langfuse"]
+    environment:
+      - CLICKHOUSE_USER=langfuse
+      - CLICKHOUSE_PASSWORD=langfuse
+      - CLICKHOUSE_DB=langfuse
+    volumes:
+      - langfuse-clickhouse-data:/var/lib/clickhouse
+    networks:
+      - monitoring
+
+  langfuse-redis:
+    image: redis:7-alpine
+    profiles: ["local-langfuse"]
+    networks:
+      - monitoring
+
+  langfuse-minio:
+    image: minio/minio:latest
+    profiles: ["local-langfuse"]
+    command: server /data --console-address ":9001"
+    environment:
+      - MINIO_ROOT_USER=langfuse
+      - MINIO_ROOT_PASSWORD=langfuse123
+    volumes:
+      - langfuse-minio-data:/data
+    networks:
+      - monitoring
+
+  langfuse-server:
+    image: ghcr.io/langfuse/langfuse:3
+    profiles: ["local-langfuse"]
+    ports:
+      - "3001:3000"   # 宿主机 3001
+    environment:
+      - DATABASE_URL=postgresql://langfuse:langfuse@langfuse-db:5432/langfuse
+      - NEXTAUTH_URL=http://localhost:3001
+      - NEXTAUTH_SECRET=langfuse-nextauth-secret-change-me
+      - SALT=langfuse-salt-change-me
+      # ENCRYPTION_KEY 需 64 位 hex，生产环境请用 `openssl rand -hex 32` 生成
+      - ENCRYPTION_KEY=0000000000000000000000000000000000000000000000000000000000000000
+      - CLICKHOUSE_URL=http://langfuse-clickhouse:8123
+      - CLICKHOUSE_MIGRATION_URL=clickhouse://langfuse-clickhouse:9000
+      - CLICKHOUSE_USER=langfuse
+      - CLICKHOUSE_PASSWORD=langfuse
+      - CLICKHOUSE_DB=langfuse
+      - CLICKHOUSE_CLUSTER_ENABLED=false
+      - REDIS_CONNECTION_STRING=redis://langfuse-redis:6379
+      - LANGFUSE_S3_EVENT_UPLOAD_BUCKET=langfuse
+      - LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT=http://langfuse-minio:9000
+      - LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID=langfuse
+      - LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY=langfuse123
+      - LANGFUSE_S3_EVENT_UPLOAD_FORCE_PATH_STYLE=true
+    depends_on:
+      langfuse-db:
+        condition: service_healthy
+    networks:
+      - monitoring
+
+  langfuse-worker:
+    image: langfuse/langfuse-worker:3
+    profiles: ["local-langfuse"]
+    environment:
+      # 关键：worker 不跑数据库迁移，避免与 server 并发迁移导致死锁
+      - LANGFUSE_AUTO_POSTGRES_MIGRATION_DISABLED=true
+      - DATABASE_URL=postgresql://langfuse:langfuse@langfuse-db:5432/langfuse
+      - NEXTAUTH_URL=http://localhost:3001
+      - NEXTAUTH_SECRET=langfuse-nextauth-secret-change-me
+      - SALT=langfuse-salt-change-me
+      - ENCRYPTION_KEY=0000000000000000000000000000000000000000000000000000000000000000
+      - CLICKHOUSE_URL=http://langfuse-clickhouse:8123
+      - CLICKHOUSE_MIGRATION_URL=clickhouse://langfuse-clickhouse:9000
+      - CLICKHOUSE_USER=langfuse
+      - CLICKHOUSE_PASSWORD=langfuse
+      - CLICKHOUSE_DB=langfuse
+      - CLICKHOUSE_CLUSTER_ENABLED=false
+      - REDIS_CONNECTION_STRING=redis://langfuse-redis:6379
+      - LANGFUSE_S3_EVENT_UPLOAD_BUCKET=langfuse
+      - LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT=http://langfuse-minio:9000
+      - LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID=langfuse
+      - LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY=langfuse123
+      - LANGFUSE_S3_EVENT_UPLOAD_FORCE_PATH_STYLE=true
+    depends_on:
+      langfuse-db:
+        condition: service_healthy
+    networks:
+      - monitoring
+
+
+
+networks:
+  monitoring:
+    driver: bridge
+
+volumes:
+  postgres-data:
+  langfuse-db-data:
+  langfuse-clickhouse-data:
+  langfuse-minio-data:
+  ollama-data:

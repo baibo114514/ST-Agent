@@ -1,0 +1,52 @@
+Python-generated files
+
+pycache/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+*.jsonl
+!services/evaluation_service/data/questions/*.jsonl
+
+Virtual environments
+
+.venv
+venv/
+
+Environment variables
+
+.env
+.env.development
+.env.staging
+.env.production
+.env.local
+
+IDE & Editor settings
+
+.vscode/
+.cursor/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+Misc & Personal files
+
+*.ipynb
+*.dump
+
+
+Reports & Uploads
+
+evals/reports/
+services/evaluation_service/results/
+uploads/
+
+Local runtime state
+
+.runtime/
+logs/
+
+app/**/README.md
+services/**/README.md

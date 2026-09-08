@@ -1,0 +1,39 @@
+# ============================================================================
+# 精简生产部署（阿里云轻量服务器 2核2GB）
+# ============================================================================
+# 只跑 PostgreSQL + pgvector（唯一需要容器化的基础设施）。
+# 主后端 / knowledge-service / 前端直接跑宿主机，embedding 走外部 API。
+#
+# 启动：docker compose --env-file .env.production -f docker-compose.prod.yml up -d
+# 停止：docker compose --env-file .env.production -f docker-compose.prod.yml down
+# ============================================================================
+
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    environment:
+      - POSTGRES_DB=${POSTGRES_DB}
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+    ports:
+      - "127.0.0.1:5432:5432"   # 仅本机监听，不暴露公网
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    # 2GB 内存下的保守调优
+    command:
+      - "postgres"
+      - "-c"
+      - "shared_buffers=128MB"      # 默认 128MB，显式固定
+      - "-c"
+      - "max_connections=60"        # 连接池已调小，60 足够
+      - "-c"
+      - "work_mem=4MB"              # 单个排序/哈希操作内存
+      - "-c"
+      - "maintenance_work_mem=64MB" # 仅维护操作用，可小
+      - "-c"
+      - "effective_cache_size=256MB"
+    restart: always
+    mem_limit: 512m                 # 硬上限，防止数据库挤爆内存
+
+volumes:
+  postgres-data:
