@@ -68,6 +68,7 @@ langfuse = Langfuse(
 # 应用生命周期管理
 # ============================================================================
 
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """
@@ -153,7 +154,8 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
     # 例如：("body", "email") → "email"
     formatted_errors = []
     for error in exc.errors():
-        loc = " -> ".join([str(loc_part) for loc_part in error["loc"] if loc_part != "body"])
+        loc = " -> ".join([str(loc_part)
+                          for loc_part in error["loc"] if loc_part != "body"])
         formatted_errors.append({"field": loc, "message": error["msg"]})
 
     return JSONResponse(
@@ -250,3 +252,25 @@ async def health_check(request: Request) -> Dict[str, Any]:
     status_code = status.HTTP_200_OK if db_healthy else status.HTTP_503_SERVICE_UNAVAILABLE
 
     return JSONResponse(content=response, status_code=status_code)
+
+# 在 main.py 末尾添加修复windows运行bug
+# 运行语句改为 uv run python -m app.main
+if __name__ == "__main__":
+    import asyncio
+    import selectors
+    import sys
+    import uvicorn
+
+    # 强制 Windows 使用 SelectorEventLoop
+    if sys.platform == 'win32':
+        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+        loop = asyncio.SelectorEventLoop(selectors.SelectSelector())
+        asyncio.set_event_loop(loop)
+
+    # 启动 uvicorn
+    uvicorn.run(
+        "app.main:app",
+        host="127.0.0.1",
+        port=8000,
+        workers=1
+    )
