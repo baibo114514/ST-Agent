@@ -1,0 +1,132 @@
+from __future__ import annotations
+
+from typing import Any
+from datetime import UTC, datetime
+from types import SimpleNamespace
+
+import pytest
+from fastapi import HTTPException
+from sqlalchemy.exc import SQLAlchemyError
+
+from app.models.agent import PlatformAgent
+from app.models.user import User
+from app.schemas.agent import PlatformAgentWrite
+from app.services import agent_config as agent_config_module
+from app.services.agent_config import AgentConfigService
+from conftest import run_async
+
+
+def make_admin() -> User:
+    return User(id=1, email="admin@example.com", hashed_password="not-used")
+
+
+def make_command(**updates) -> PlatformAgentWrite:
+    payload = {
+        "agentCode": "course_agent",
+        "name": "课程助手",
+        "description": "非AI配置测试",
+        "modelName": "deepseek-chat",
+        "roleDescription": "回答课程相关问题",
+        "features": {},
+        "knowledge": {"enabled": False, "kbIds": [], "topK": 5, "scoreThreshold": 0},
+        "config": {},
+    }
+    payload.update(updates)
+    return PlatformAgentWrite.model_validate(payload)
+
+
+def make_agent(**updates) -> PlatformAgent:
+    values = {
+        "id": "agent-1",
+        "agent_code": "course_agent",
+        "name": "课程助手",
+        "description": "非AI配置测试",
+        "model_name": "deepseek-chat",
+        "role_description": "回答课程相关问题",
+        "features_json": {},
+        "config_json": {"knowledge": {"enabled": False, "kbIds": [], "topK": 5, "scoreThreshold": 0}},
+        "version": 1,
+        "status": "draft",
+        "created_by": 1,
+        "created_at": datetime.now(UTC).replace(tzinfo=None),
+        "updated_at": datetime.now(UTC).replace(tzinfo=None),
+    }
+    values.update(updates)
+    return PlatformAgent(**values)
+
+
+async def immediate_to_thread(function, *args, **kwargs):
+    return function(*args, **kwargs)
+
+
+class FakeSession:
+    def __init__(self, agent=None, *, commit_error: Exception | None = None, rows=None):
+        self.agent = agent
+        self.commit_error = commit_error
+        self.rows = rows or []
+        self.added = []
+        self.statement: Any = None
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        return False
+
+    def add(self, value):
+        self.added.append(value)
+        if isinstance(value, PlatformAgent):
+            self.agent = value
+
+    def get(self, model, agent_id):
+        return self.agent if self.agent and self.agent.id == agent_id else None
+
+    def commit(self):
+        if self.commit_error:
+            raise self.commit_error
+
+    def refresh(self, value):
+        return None
+
+    def exec(self, statement):
+        self.statement = statement
+        return SimpleNamespace(all=lambda: self.rows)
+
+
+def install_fake_session(monkeypatch, fake_session: FakeSession):
+    monkeypatch.setattr(agent_config_module.asyncio, "to_thread", immediate_to_thread)
+    monkeypatch.setattr(agent_config_module, "Session", lambda engine: fake_session)
+
+
+def test_st_agent_001_create_agent_with_knowledge_disabled(monkeypatch):
+    fake_session = FakeSession()
+    install_fake_session(monkeypatch, fake_session)
+    service = AgentConfigService()
+
+    response = run_async(service.create_platform_agent(make_command(), make_admin()))
+
+    assert response.status == "draft"
+    assert response.version == 1
+    assert response.knowledge.enabled is False
+    assert response.knowledge.kb_ids == []
+    assert len(fake_session.added) == 1
+
+
+def test_st_agent_002_reject_invalid_agent_code():
+    service = AgentConfigService()
+    with pytest.raises(HTTPException) as exc_info:
+        run_async(service._normalize_write(make_command(agentCode="bad.agent"), make_admin()))
+    assert exc_info.value.status_code == 400
+    assert exc_info.value.detail == "Agent code format is invalid"
+
+
+def test_st_agent_003_reject_duplicate_agent_code(monkeypatch):
+    fake_session = FakeSession(commit_error=SQLAlchemyError("duplicate"))
+    install_fake_session(monkeypatch, fake_session)
+    service = AgentConfigService()
+
+    with pytest.raises(HTTPException) as exc_info:
+        run_async(service.create_platform_agent(make_command(), make_admin()))
+
+    assert exc_info.value.status_code == 409
+    assert exc_info.value.detail == "Agent code already exists"
