@@ -1,16 +1,18 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 from datetime import UTC, datetime
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 from fastapi import HTTPException
+from pydantic import ValidationError
 from sqlalchemy.exc import SQLAlchemyError
 
 from app.models.agent import PlatformAgent
 from app.models.user import User
-from app.schemas.agent import PlatformAgentWrite
+from app.schemas.agent import AgentKnowledgeConfig, PlatformAgentWrite
 from app.services import agent_config as agent_config_module
 from app.services.agent_config import AgentConfigService
 from conftest import run_async
@@ -130,3 +132,40 @@ def test_st_agent_003_reject_duplicate_agent_code(monkeypatch):
 
     assert exc_info.value.status_code == 409
     assert exc_info.value.detail == "Agent code already exists"
+
+
+def test_st_agent_004_require_kb_ids_when_knowledge_enabled():
+    service = AgentConfigService()
+    command = make_command(knowledge={"enabled": True, "kbIds": [], "topK": 5, "scoreThreshold": 0})
+
+    with pytest.raises(HTTPException) as exc_info:
+        run_async(service._normalize_write(command, make_admin()))
+
+    assert exc_info.value.status_code == 400
+    assert exc_info.value.detail == "Knowledge bases are required"
+
+
+def test_st_agent_005_reject_more_than_ten_bound_knowledge_bases():
+    kb_ids = [f"kb-{index}" for index in range(11)]
+    with pytest.raises(ValidationError, match="at most 10"):
+        AgentKnowledgeConfig(enabled=True, kbIds=kb_ids)
+
+
+def test_st_agent_006_reject_inactive_or_missing_knowledge_base(monkeypatch):
+    service = AgentConfigService()
+    monkeypatch.setattr(
+        agent_config_module.knowledge_service_client,
+        "get",
+        AsyncMock(return_value={"items": [{"id": "kb-1", "status": "active"}]}),
+    )
+    command = make_command(
+        knowledge={"enabled": True, "kbIds": ["kb-1", "kb-archived"], "topK": 5, "scoreThreshold": 0}
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        run_async(service._normalize_write(command, make_admin()))
+
+    assert exc_info.value.status_code == 400
+    detail = cast(dict[str, Any], exc_info.value.detail)
+    assert detail["message"] == "Knowledge base is not active"
+    assert detail["kbIds"] == ["kb-archived"]
