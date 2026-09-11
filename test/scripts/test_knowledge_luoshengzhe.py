@@ -91,3 +91,81 @@ def test_st_kb_005_reject_unknown_namespace(monkeypatch):
     assert exc_info.value.detail["code"] == "INVALID_NAMESPACE"
 
 
+def test_st_kb_006_reject_duplicate_active_name_case_insensitively():
+    existing = KnowledgeBase(id="kb-old", namespace="default", name="CourseKB", created_by="1")
+    session = make_session(scalar_values=[existing])
+
+    with pytest.raises(HTTPException) as exc_info:
+        run_async(kb_service.create_base(session, {"name": "coursekb", "namespace": "default"}, "1"))
+
+    assert exc_info.value.status_code == 409
+    assert exc_info.value.detail["code"] == "KB_NAME_EXISTS"
+    session.add.assert_not_called()
+
+
+def test_st_kb_007_reject_non_object_search_policy():
+    kb = KnowledgeBase(id="kb-1", namespace="default", name="KB", created_by="1")
+    session = make_session(scalar_values=[kb])
+
+    with pytest.raises(HTTPException) as exc_info:
+        run_async(kb_service.update_base(session, "kb-1", {"searchPolicyJson": "vector"}))
+
+    assert exc_info.value.status_code == 400
+    assert exc_info.value.detail["code"] == "INVALID_POLICY"
+    session.commit.assert_not_awaited()
+
+
+def test_st_kb_008_archive_and_restore_lifecycle():
+    kb = KnowledgeBase(id="kb-1", namespace="default", name="KB", created_by="1")
+    session = make_session(scalar_values=[kb, kb])
+
+    archived = run_async(kb_service.archive_base(session, "kb-1", archived=True))
+    restored = run_async(kb_service.archive_base(session, "kb-1", archived=False))
+
+    assert archived["status"] == "archived"
+    assert restored["status"] == "active"
+    assert session.commit.await_count == 2
+
+
+def test_st_kb_009_include_archived_changes_list_filter():
+    active_session = make_session(scalar_values=[0])
+    active_session.execute.return_value = EmptyScalarResult()
+    all_session = make_session(scalar_values=[0])
+    all_session.execute.return_value = EmptyScalarResult()
+
+    run_async(kb_service.list_bases(active_session, include_archived=False))
+    run_async(kb_service.list_bases(all_session, include_archived=True))
+
+    active_sql = str(active_session.scalar.await_args.args[0])
+    all_sql = str(all_session.scalar.await_args.args[0])
+    assert "te_knowledge_base.status" in active_sql
+    assert "te_knowledge_base.status" not in all_sql
+
+
+def test_st_kb_010_pagination_clamps_page_and_page_size():
+    assert kb_service._paginate_query(0, 101) == (1, 100)
+
+
+def test_st_kb_011_document_list_uses_metadata_filters_not_body_scan():
+    kb = KnowledgeBase(id="kb-1", namespace="default", name="KB", created_by="1")
+    session = make_session(scalar_values=[kb, 0])
+    session.execute.return_value = EmptyScalarResult()
+
+    result = run_async(
+        kb_service.list_documents(
+            session,
+            "kb-1",
+            include_archived=False,
+            keyword="政策",
+            source_type="file",
+        )
+    )
+
+    count_sql = str(session.scalar.await_args_list[1].args[0])
+    assert "te_knowledge_document.title" in count_sql
+    assert "te_knowledge_document.source_ref" in count_sql
+    assert "te_knowledge_document.file_name" in count_sql
+    assert "te_knowledge_document.content_text" not in count_sql
+    assert "te_knowledge_document.source_type" in count_sql
+    assert "te_knowledge_document.ingest_status" in count_sql
+    assert result["items"] == []
