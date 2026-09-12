@@ -61,3 +61,23 @@ def test_st_auth_004_reject_password_longer_than_sixty_four():
     assert len(password) == 65
     with pytest.raises(ValidationError):
         UserCreate(email=VALID_EMAIL, password=password)
+
+
+def test_st_auth_005_reject_password_without_uppercase():
+    with pytest.raises(ValidationError, match="uppercase"):
+        UserCreate(email=VALID_EMAIL, password="valid@123")
+
+
+def test_st_auth_006_reject_password_without_lowercase():
+    with pytest.raises(ValidationError, match="lowercase"):
+        UserCreate(email=VALID_EMAIL, password="VALID@123")
+
+
+def test_st_auth_007_reject_password_without_number():
+    with pytest.raises(ValidationError, match="number"):
+        UserCreate(email=VALID_EMAIL, password="Valid@Test")
+
+
+def test_st_auth_008_reject_password_without_special_character():
+    with pytest.raises(ValidationError, match="special"):
+        UserCreate(email=VALID_EMAIL, password="Valid1234")
