@@ -169,3 +169,59 @@ def test_st_kb_011_document_list_uses_metadata_filters_not_body_scan():
     assert "te_knowledge_document.source_type" in count_sql
     assert "te_knowledge_document.ingest_status" in count_sql
     assert result["items"] == []
+
+def test_st_kb_012_extract_utf8_text_without_corruption():
+    result = extract_text_from_bytes("政策.txt", "text/plain", "武汉扶持政策".encode("utf-8"))
+    assert result == {
+        "title": "政策.txt",
+        "contentText": "武汉扶持政策",
+        "pages": 0,
+        "metadata": {},
+    }
+
+
+def test_st_kb_013_extract_and_strip_markdown_metadata():
+    text = "# 测试政策\n- **地区**：武汉\n- 年份：2026\n---\n正文内容"
+    result = extract_markdown_front_matter(text)
+
+    assert result["title"] == "测试政策"
+    assert result["metadata"]["地区"] == "武汉"
+    assert result["metadata"]["年份"] == "2026"
+    assert result["metadata"]["title"] == "测试政策"
+    assert result["contentText"] == "正文内容"
+    assert result["sourceType"] == "markdown_metadata_block"
+
+
+def test_st_kb_014_reject_unsupported_binary_file():
+    with pytest.raises(HTTPException) as exc_info:
+        extract_text_from_bytes("sample.exe", "application/octet-stream", b"binary")
+    assert exc_info.value.status_code == 400
+    assert exc_info.value.detail["code"] == "UNSUPPORTED_FILE"
+
+
+def test_st_kb_015_single_chunk_at_size_boundary(monkeypatch):
+    monkeypatch.setattr(kb_service.settings, "chunk_size", 100)
+    monkeypatch.setattr(kb_service.settings, "chunk_overlap", 0)
+    content = "x" * 97
+
+    chunks = kb_service.chunk_text("T", content)
+
+    assert chunks == ["T\n\n" + content]
+    assert len(chunks[0]) == 100
+
+def test_st_kb_016_rename_to_existing_name_should_be_rejected():
+    # 缺陷复现：先创建知识库 A，再创建知识库 B，然后把 B 重命名为 A。
+    # 当前 update_base 未做重名校验（create_base 有，update_base 没有），
+    # 重命名会成功，导致同一 namespace 下两个 active 知识库同名。
+    # 正确行为：应抛 409 KB_NAME_EXISTS。本用例当前会 FAIL（DID NOT RAISE），
+    # 待 update_base 补上重名冲突校验后应转绿。
+    kb_a = KnowledgeBase(id="kb-a", namespace="default", name="A", created_by="1")
+    kb_b = KnowledgeBase(id="kb-b", namespace="default", name="B", created_by="1")
+    # 第一次 scalar 返回被更新的 B（get_kb），第二次返回重名冲突的 A（缺失的重名校验查询）
+    session = make_session(scalar_values=[kb_b, kb_a])
+
+    with pytest.raises(HTTPException) as exc_info:
+        run_async(kb_service.update_base(session, "kb-b", {"name": "A"}))
+
+    assert exc_info.value.status_code == 409
+    assert exc_info.value.detail["code"] == "KB_NAME_EXISTS"
