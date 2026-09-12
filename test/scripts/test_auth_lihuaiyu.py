@@ -3,8 +3,11 @@ from __future__ import annotations
 
 from unittest.mock import AsyncMock
 import pytest
+from types import SimpleNamespace
+
 from fastapi.security import HTTPAuthorizationCredentials
 from pydantic import ValidationError
+from fastapi import HTTPException
 from app.api.v1 import auth as auth_api
 from app.models.user import User
 from app.schemas.auth import UserCreate
@@ -81,3 +84,56 @@ def test_st_auth_007_reject_password_without_number():
 def test_st_auth_008_reject_password_without_special_character():
     with pytest.raises(ValidationError, match="special"):
         UserCreate(email=VALID_EMAIL, password="Valid1234")
+
+
+def test_st_auth_009_reject_duplicate_email(monkeypatch):
+    monkeypatch.setattr(auth_api.database_service,
+                        "get_user_by_email", AsyncMock(return_value=make_user()))
+    create_mock = AsyncMock()
+    monkeypatch.setattr(auth_api.database_service, "create_user", create_mock)
+
+    with pytest.raises(HTTPException) as exc_info:
+        run_async(auth_api.register(UserCreate(
+            email=VALID_EMAIL, password=VALID_PASSWORD)))
+
+    assert exc_info.value.status_code == 400
+    assert exc_info.value.detail == "Email already registered"
+    create_mock.assert_not_awaited()
+
+
+def test_st_auth_010_login_with_correct_credentials(monkeypatch):
+    monkeypatch.setattr(auth_api.database_service,
+                        "get_user_by_email", AsyncMock(return_value=make_user()))
+    monkeypatch.setattr(auth_api.settings, "PLATFORM_ADMIN_EMAILS", [])
+    form = SimpleNamespace(username=VALID_EMAIL, password=VALID_PASSWORD)
+
+    response = run_async(auth_api.login(form))
+
+    assert response.token_type == "bearer"
+    assert auth_utils.verify_token(response.access_token) == "1"
+    assert response.is_admin is False
+
+
+def test_st_auth_011_login_unknown_email_has_generic_error(monkeypatch):
+    monkeypatch.setattr(auth_api.database_service,
+                        "get_user_by_email", AsyncMock(return_value=None))
+    form = SimpleNamespace(username="nobody@example.com",
+                           password=VALID_PASSWORD)
+
+    with pytest.raises(HTTPException) as exc_info:
+        run_async(auth_api.login(form))
+
+    assert exc_info.value.status_code == 401
+    assert exc_info.value.detail == "Incorrect email or password"
+
+
+def test_st_auth_012_login_wrong_password_has_same_generic_error(monkeypatch):
+    monkeypatch.setattr(auth_api.database_service,
+                        "get_user_by_email", AsyncMock(return_value=make_user()))
+    form = SimpleNamespace(username=VALID_EMAIL, password="Wrong@123")
+
+    with pytest.raises(HTTPException) as exc_info:
+        run_async(auth_api.login(form))
+
+    assert exc_info.value.status_code == 401
+    assert exc_info.value.detail == "Incorrect email or password"
