@@ -169,3 +169,53 @@ def test_st_agent_006_reject_inactive_or_missing_knowledge_base(monkeypatch):
     detail = cast(dict[str, Any], exc_info.value.detail)
     assert detail["message"] == "Knowledge base is not active"
     assert detail["kbIds"] == ["kb-archived"]
+
+
+def test_st_agent_007_update_increments_version(monkeypatch):
+    agent = make_agent(version=1)
+    fake_session = FakeSession(agent=agent)
+    install_fake_session(monkeypatch, fake_session)
+    service = AgentConfigService()
+
+    response = run_async(
+        service.update_platform_agent("agent-1", make_command(name="更新后的名称"), make_admin())
+    )
+
+    assert response.name == "更新后的名称"
+    assert response.version == 2
+    assert response.created_by == 1
+
+
+def test_st_agent_008_update_unknown_agent_returns_404(monkeypatch):
+    install_fake_session(monkeypatch, FakeSession(agent=None))
+    service = AgentConfigService()
+
+    with pytest.raises(HTTPException) as exc_info:
+        run_async(service.update_platform_agent("missing", make_command(), make_admin()))
+
+    assert exc_info.value.status_code == 404
+    assert exc_info.value.detail == "Agent not found"
+
+
+def test_st_agent_009_first_publish_records_published_time(monkeypatch):
+    agent = make_agent(status="draft", published_at=None)
+    fake_session = FakeSession(agent=agent)
+    install_fake_session(monkeypatch, fake_session)
+    service = AgentConfigService()
+
+    response = run_async(service.change_status("agent-1", "published", make_admin()))
+
+    assert response.status == "published"
+    assert response.published_at is not None
+
+
+def test_st_agent_010_offline_agent_cannot_be_called(monkeypatch):
+    agent = make_agent(status="offline")
+    install_fake_session(monkeypatch, FakeSession(agent=agent))
+    service = AgentConfigService()
+
+    with pytest.raises(HTTPException) as exc_info:
+        run_async(service.get_published_agent("agent-1"))
+
+    assert exc_info.value.status_code == 404
+    assert exc_info.value.detail == "Agent not found"
