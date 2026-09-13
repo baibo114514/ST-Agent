@@ -198,3 +198,39 @@ def test_st_auth_016_regular_user_cannot_access_platform_admin_api(monkeypatch):
 
     assert exc_info.value.status_code == 403
     assert exc_info.value.detail == "Platform admin access required"
+
+
+def test_st_auth_017_email_case_is_normalized(monkeypatch):
+    captured = {}
+
+    async def get_user_by_email(email: str):
+        captured["lookup"] = email
+        return None
+
+    async def create_user(user: User):
+        captured["created"] = user.email
+        user.id = 1
+        return user
+
+    monkeypatch.setattr(auth_api.database_service,
+                        "get_user_by_email", get_user_by_email)
+    monkeypatch.setattr(auth_api.database_service, "create_user", create_user)
+    monkeypatch.setattr(auth_api.settings, "PLATFORM_ADMIN_EMAILS", [])
+
+    run_async(auth_api.register(UserCreate(
+        email=MIXED_CASE_EMAIL, password=VALID_PASSWORD)))
+
+    assert captured["lookup"] == VALID_EMAIL
+    assert captured["created"] == VALID_EMAIL
+
+    async def get_existing(email: str):
+        captured["login_lookup"] = email
+        return make_user()
+
+    monkeypatch.setattr(auth_api.database_service,
+                        "get_user_by_email", get_existing)
+    form = SimpleNamespace(username=MIXED_CASE_EMAIL, password=VALID_PASSWORD)
+
+    run_async(auth_api.login(form))
+
+    assert captured["login_lookup"] == VALID_EMAIL
