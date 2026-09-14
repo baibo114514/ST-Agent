@@ -225,3 +225,64 @@ def test_st_kb_016_rename_to_existing_name_should_be_rejected():
 
     assert exc_info.value.status_code == 409
     assert exc_info.value.detail["code"] == "KB_NAME_EXISTS"
+
+def test_st_kb_017_extract_gb18030_text_without_corruption():
+    result = extract_text_from_bytes("通知.txt", "text/plain", "武汉园区通知".encode("gb18030"))
+
+    assert result["contentText"] == "武汉园区通知"
+    assert result["pages"] == 0
+
+
+def test_st_kb_018_extract_yaml_front_matter_and_strip_block():
+    text = "---\ntitle: 测试通知\nregion: 武汉\n---\n正文内容"
+    result = extract_markdown_front_matter(
+        text,
+        {"enabled": True, "format": "yaml_front_matter", "stripExtractedBlock": True},
+    )
+
+    assert result["metadata"] == {"title": "测试通知", "region": "武汉"}
+    assert result["contentText"] == "正文内容"
+    assert result["sourceType"] == "yaml_front_matter"
+
+
+def test_st_kb_019_reject_metadata_json_array():
+    with pytest.raises(HTTPException) as exc_info:
+        parse_metadata('["not", "an", "object"]')
+
+    assert exc_info.value.status_code == 400
+    assert exc_info.value.detail["code"] == "INVALID_METADATA"
+
+
+def test_st_kb_020_apply_metadata_mappings_types_and_defaults():
+    config = {
+        "schema": {"name": "policy", "version": "1"},
+        "mappings": {
+            "地区": {"path": "common.region", "type": "string"},
+            "支持方式": {"path": "domain.supportModes", "type": "list"},
+            "有效": {"path": "domain.active", "type": "boolean"},
+        },
+        "defaults": {"common.year": 2026},
+        "keepUnmappedInDomain": True,
+    }
+
+    result = normalize_metadata(
+        {"地区": "武汉", "支持方式": "补贴；贷款", "有效": "是", "备注": "公开"},
+        file_name="政策.md",
+        extraction_config=config,
+    )
+
+    assert result["common"] == {"region": "武汉", "year": 2026}
+    assert result["domain"]["supportModes"] == ["补贴", "贷款"]
+    assert result["domain"]["active"] is True
+    assert result["domain"]["备注"] == "公开"
+    assert result["_ingest"]["fileName"] == "政策.md"
+
+
+def test_st_kb_021_add_overlap_between_multiple_chunks(monkeypatch):
+    monkeypatch.setattr(kb_service.settings, "chunk_size", 100)
+    monkeypatch.setattr(kb_service.settings, "chunk_overlap", 10)
+
+    chunks = kb_service.chunk_text("", "x" * 150)
+
+    assert len(chunks) == 2
+    assert chunks[1].startswith("x" * 10 + "\n\n")    
