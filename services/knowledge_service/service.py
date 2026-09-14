@@ -895,6 +895,16 @@ async def update_base(session: AsyncSession, kb_id: str, payload: Dict[str, Any]
         name = str(payload.get("name") or "").strip()
         if not name:
             raise problem(status.HTTP_400_BAD_REQUEST, "INVALID_NAME", "name is required")
+        exists = await session.scalar(
+            select(KnowledgeBase).where(
+                KnowledgeBase.namespace == kb.namespace,
+                func.lower(KnowledgeBase.name) == name.lower(),
+                KnowledgeBase.status == "active",
+                KnowledgeBase.id != kb.id,
+            )
+        )
+        if exists:
+            raise problem(status.HTTP_409_CONFLICT, "KB_NAME_EXISTS", "active knowledge base name already exists")
         kb.name = name[:255]
     if "description" in payload:
         kb.description = payload.get("description")
