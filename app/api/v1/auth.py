@@ -74,6 +74,7 @@ async def register(user_in: UserCreate):
         HTTPException(400): 当邮箱已被注册时抛出。
     """
     # 步骤 1: 检查邮箱是否已存在
+    user_in.email = user_in.email.strip().lower()
     existing_user = await database_service.get_user_by_email(user_in.email)
     if existing_user:
         raise HTTPException(
@@ -133,7 +134,7 @@ async def login(form_data: OAuth2PasswordRequestForm = Depends()):
         HTTPException(401): 邮箱不存在或密码错误时抛出。
     """
     # 步骤 1: 查找用户（注意 OAuth2 表单的 username 字段对应邮箱）
-    user = await database_service.get_user_by_email(form_data.username)
+    user = await database_service.get_user_by_email(form_data.username.strip().lower())
     if not user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
