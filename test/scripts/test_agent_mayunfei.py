@@ -275,3 +275,25 @@ def test_st_agent_013_public_list_query_only_selects_published(monkeypatch):
     assert "roleDescription" not in public_payload
     assert "config" not in public_payload
     assert "createdBy" not in public_payload
+
+
+def test_st_agent_014_admin_list_can_exclude_offline_agents(monkeypatch):
+    published = make_agent(id="agent-published", status="published")
+    offline = make_agent(id="agent-offline", status="offline")
+    fake_session = FakeSession(rows=[published, offline])
+    install_fake_session(monkeypatch, fake_session)
+    service = AgentConfigService()
+
+    items = run_async(service.list_platform_agents(include_offline=False))
+
+    assert [item.agent_id for item in items] == ["agent-published"]
+
+
+def test_st_agent_015_reject_unsupported_status():
+    service = AgentConfigService()
+
+    with pytest.raises(HTTPException) as exc_info:
+        run_async(service.change_status("agent-1", "deleted", make_admin()))
+
+    assert exc_info.value.status_code == 400
+    assert exc_info.value.detail == "Unsupported agent status"
