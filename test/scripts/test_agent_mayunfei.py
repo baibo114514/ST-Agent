@@ -17,6 +17,11 @@ from app.services import agent_config as agent_config_module
 from app.services.agent_config import AgentConfigService
 from conftest import run_async
 
+import ast
+import inspect
+from app.api.v1 import auth as auth_api
+from app.api.v1 import sessions
+
 
 def make_admin() -> User:
     return User(id=1, email="admin@example.com", hashed_password="not-used")
@@ -98,6 +103,32 @@ class FakeSession:
 def install_fake_session(monkeypatch, fake_session: FakeSession):
     monkeypatch.setattr(agent_config_module.asyncio, "to_thread", immediate_to_thread)
     monkeypatch.setattr(agent_config_module, "Session", lambda engine: fake_session)
+
+
+def _unlimited_route_functions(module):
+    tree = ast.parse(inspect.getsource(module))
+    missing = []
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        has_route = any(
+            isinstance(decorator, ast.Call)
+            and isinstance(decorator.func, ast.Attribute)
+            and isinstance(decorator.func.value, ast.Name)
+            and decorator.func.value.id == "router"
+            for decorator in node.decorator_list
+        )
+        has_limiter = any(
+            isinstance(decorator, ast.Call)
+            and isinstance(decorator.func, ast.Attribute)
+            and isinstance(decorator.func.value, ast.Name)
+            and decorator.func.value.id == "limiter"
+            and decorator.func.attr == "limit"
+            for decorator in node.decorator_list
+        )
+        if has_route and not has_limiter:
+            missing.append(node.name)
+    return missing
 
 
 def test_st_agent_001_create_agent_with_knowledge_disabled(monkeypatch):
@@ -219,3 +250,28 @@ def test_st_agent_010_offline_agent_cannot_be_called(monkeypatch):
 
     assert exc_info.value.status_code == 404
     assert exc_info.value.detail == "Agent not found"
+
+
+def test_st_agent_011_all_session_routes_have_rate_limits():
+    assert _unlimited_route_functions(sessions) == []
+
+
+def test_st_agent_012_all_auth_routes_have_rate_limits():
+    assert _unlimited_route_functions(auth_api) == []
+
+
+def test_st_agent_013_public_list_query_only_selects_published(monkeypatch):
+    published = make_agent(status="published")
+    fake_session = FakeSession(rows=[published])
+    install_fake_session(monkeypatch, fake_session)
+    service = AgentConfigService()
+
+    items = run_async(service.list_public_agents())
+
+    sql = str(fake_session.statement.compile(compile_kwargs={"literal_binds": True}))
+    assert "platform_agent.status = 'published'" in sql
+    assert len(items) == 1
+    public_payload = items[0].model_dump(by_alias=True)
+    assert "roleDescription" not in public_payload
+    assert "config" not in public_payload
+    assert "createdBy" not in public_payload
