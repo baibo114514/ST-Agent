@@ -18,9 +18,11 @@ auth.py（会话 CRUD）的整合：
 import uuid
 from typing import List
 
-from fastapi import APIRouter, Body, Depends, HTTPException, status
+from fastapi import APIRouter, Body, Depends, HTTPException, Request, status
 
+from app.core.config import settings
 from app.core.langgraph.graph import chatbot
+from app.core.limiter import limiter
 from app.core.logging import logger
 from app.models.user import User
 from app.schemas.auth import SessionResponse
@@ -41,7 +43,6 @@ async def _get_owned_session(session_id: str, user: User):
     return session
 
 
-@router.post("", response_model=SessionResponse)
 async def create_session(
     name: str = "New Chat",
     user: User = Depends(get_current_user),
@@ -62,8 +63,20 @@ async def create_session(
         raise HTTPException(status_code=500, detail="Failed to create session")
 
 
+@router.post("", response_model=SessionResponse, name="create_session")
+@limiter.limit(settings.RATE_LIMIT_ENDPOINTS["sessions"][0])
+async def _create_session_endpoint(
+    request: Request,
+    name: str = "New Chat",
+    user: User = Depends(get_current_user),
+):
+    """受限流保护的会话创建 HTTP 端点。"""
+    return await create_session(name, user)
+
+
 @router.get("", response_model=List[SessionResponse])
-async def get_user_sessions(user: User = Depends(get_current_user)):
+@limiter.limit(settings.RATE_LIMIT_ENDPOINTS["sessions"][0])
+async def get_user_sessions(request: Request, user: User = Depends(get_current_user)):
     """获取当前用户的所有会话，按创建时间倒序。"""
     try:
         sessions = await database_service.get_user_sessions(user.id)
@@ -81,7 +94,9 @@ async def get_user_sessions(user: User = Depends(get_current_user)):
 
 
 @router.delete("/{session_id}", status_code=status.HTTP_204_NO_CONTENT)
+@limiter.limit(settings.RATE_LIMIT_ENDPOINTS["sessions"][0])
 async def delete_session(
+    request: Request,
     session_id: str,
     user: User = Depends(get_current_user),
 ):
@@ -91,7 +106,9 @@ async def delete_session(
 
 
 @router.get("/{session_id}/history", response_model=List[Message])
+@limiter.limit(settings.RATE_LIMIT_ENDPOINTS["messages"][0])
 async def get_history(
+    request: Request,
     session_id: str,
     user: User = Depends(get_current_user),
 ):
@@ -101,7 +118,9 @@ async def get_history(
 
 
 @router.delete("/{session_id}/history")
+@limiter.limit(settings.RATE_LIMIT_ENDPOINTS["messages"][0])
 async def clear_history(
+    request: Request,
     session_id: str,
     user: User = Depends(get_current_user),
 ):
@@ -112,12 +131,14 @@ async def clear_history(
 
 
 @router.post("/{session_id}/resume")
+@limiter.limit(settings.RATE_LIMIT_ENDPOINTS["email_resume"][0])
 async def resume_chat(
+    request: Request,
     session_id: str,
-    request: ResumeRequest = Body(...),
+    payload: ResumeRequest = Body(...),
     user: User = Depends(get_current_user),
 ):
     """恢复被中断的会话执行（如邮件审批后的批准/拒绝）。"""
     await _get_owned_session(session_id, user)
-    result = await chatbot.resume_graph(session_id, request.approved)
+    result = await chatbot.resume_graph(session_id, payload.approved)
     return {"message": result}

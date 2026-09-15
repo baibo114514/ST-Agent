@@ -302,8 +302,10 @@ class Settings:
             "platform_admin": ["120 per minute"],
             "knowledge_proxy": ["60 per minute"],
             "knowledge_ingest": ["10000 per hour"],
+            "sessions": ["60 per minute"],
             "register": ["10 per hour"],
             "login": ["20 per minute"],
+            "auth_me": ["60 per minute"],
             "root": ["10 per minute"],
             "health": ["20 per minute"],
             "rag_upload": ["20 per hour"],       # 知识库文档上传限流

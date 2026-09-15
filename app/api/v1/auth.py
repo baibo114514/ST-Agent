@@ -18,11 +18,13 @@ from fastapi import (
     APIRouter,
     Depends,
     HTTPException,
+    Request,
     status,
 )
 from fastapi.security import OAuth2PasswordRequestForm
 
 from app.core.config import settings
+from app.core.limiter import limiter
 from app.models.user import User
 from app.schemas.auth import (
     MeResponse,
@@ -51,7 +53,6 @@ def _is_platform_admin(user: User) -> bool:
 # 用户注册与登录
 # ============================================================================
 
-@router.post("/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
 async def register(user_in: UserCreate):
     """
     注册新用户。
@@ -105,7 +106,18 @@ async def register(user_in: UserCreate):
     )
 
 
-@router.post("/login", response_model=TokenResponse)
+@router.post(
+    "/register",
+    response_model=UserResponse,
+    status_code=status.HTTP_201_CREATED,
+    name="register",
+)
+@limiter.limit(settings.RATE_LIMIT_ENDPOINTS["register"][0])
+async def _register_endpoint(request: Request, user_in: UserCreate):
+    """受限流保护的注册 HTTP 端点。"""
+    return await register(user_in)
+
+
 async def login(form_data: OAuth2PasswordRequestForm = Depends()):
     """
     用户登录。
@@ -161,7 +173,16 @@ async def login(form_data: OAuth2PasswordRequestForm = Depends()):
     )
 
 
-@router.get("/me", response_model=MeResponse)
+@router.post("/login", response_model=TokenResponse, name="login")
+@limiter.limit(settings.RATE_LIMIT_ENDPOINTS["login"][0])
+async def _login_endpoint(
+    request: Request,
+    form_data: OAuth2PasswordRequestForm = Depends(),
+):
+    """受限流保护的登录 HTTP 端点。"""
+    return await login(form_data)
+
+
 async def get_me(user: User = Depends(get_current_user)):
     """
     获取当前登录用户信息。
@@ -177,3 +198,13 @@ async def get_me(user: User = Depends(get_current_user)):
         email=user.email,
         is_admin=_is_platform_admin(user),
     )
+
+
+@router.get("/me", response_model=MeResponse, name="get_me")
+@limiter.limit(settings.RATE_LIMIT_ENDPOINTS["auth_me"][0])
+async def _get_me_endpoint(
+    request: Request,
+    user: User = Depends(get_current_user),
+):
+    """受限流保护的当前用户 HTTP 端点。"""
+    return await get_me(user)
