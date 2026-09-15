@@ -1,148 +1,237 @@
-# 🚀 FastGraph Agent Engine
+# ST-Agent 智能体对话平台
 
-基于 **FastAPI + LangGraph** 的生产级 AI Agent 平台，采用「前端控制台 / 主后端 control-plane / 知识库微服务」三层架构。
+该项目是一个基于 FastAPI、LangGraph 和 PostgreSQL/pgvector 的 AI Agent对话平台，提供用户认证、会话管理、Agent 配置与发布、知识库文档入库和检索等功能。
 
-> **当前分支 `slim-deploy`** —— 面向阿里云轻量服务器的精简部署版。相比 `main`，本分支聚焦两大能力：**可插拔知识库检索算法体系** 与 **联网搜索 + 知识库兜底**，并裁剪掉监控三件套（Prometheus/Grafana/cAdvisor）与在线评估模块，产物为「容器化数据库 + 外部 embedding/LLM + nginx 反代」的最小部署形态。
+项目采用三层架构：前端只访问主后端，主后端负责认证、权限、Agent 管理和运行时编排，知识库微服务负责文档解析、切分、向量化和检索。
 
----
-
-## ✨ 本分支核心能力
-
-### 1. 可插拔知识库检索算法（六策略 + rerank 变体）
-
-检索逻辑从 service 层抽离成独立子包（`services/knowledge_service/retrieval/`），每种算法一个文件、可独立注册与 A/B 评估：
-
-| 策略 | 类型 | 说明 | 依赖 embedding |
-|---|---|---|---|
-| `vector` | 向量检索 | HNSW 向量召回（pgvector `cosine_distance`）→ metadata 粗筛 → Python 精筛 → `min_score` 过滤 | ✅ |
-| `weighted` | 元数据加权排序 | 向量召回之上叠加区域/时效/产业**软偏好**加分，精度最优 | ✅ |
-| `hybrid` | 混合检索 | 向量 + 关键词 n-gram 重叠加分 | ✅ |
-| `keyword` | 纯关键词 | `pg_trgm` word_similarity，无嵌入基线 | ❌ |
-| `fulltext` | 全文检索 | jieba 分词 + PG `tsvector/ts_rank` | ❌ |
-| `keyword_rank` | 关键词评分 + 规则重排 | 移植自 agent-paas，policy 规则重排 | ❌ |
-
-- 向量类策略（`vector`/`weighted`/`hybrid`）均提供 `_reranker` 精排变体。
-- **知识库级配置**：每个知识库通过 `searchPolicyJson.strategy` 独立指定算法，请求可用 `strategy` 字段临时覆盖。
-- **HNSW 索引 + metadata 过滤下推**：向量检索走 pgvector HNSW 索引，metadata 条件尽量下推到 SQL。
-
-> 100 条业务场景评估集（rerank 开）：`weighted` 通过 86/100、MRR 0.931、hit@1 0.906（六策略最优）；`vector` 通过 80/100、MRR 0.863（基线）。详见 `services/evaluation_service/retrieval_eval_design.md`。
-
-### 2. 联网搜索 + 知识库兜底（AnySearch）
-
-- 联网搜索统一走 **AnySearch**（Bearer auth，`cn`/`zh-CN` 中文区）；未配置 `ANYSEARCH_API_KEY` 时自动降级 **DuckDuckGo**。
-- 知识库检索**未命中或低分**时可按需联网兜底，开关是**知识库级**的 `searchPolicyJson.allowWebFallback`（默认关闭），把联网结果追加在知识库结果之后，弥补「最新 / 时效」类检索不足。
-
-### 3. LLM 自选知识库
-
-`knowledge_base_search` 工具的 `kb_id` 为 LLM 可选参数——从该 Agent 已绑定的知识库列表中自选一个精确检索；未填或越权时回退到绑定的完整 `kb_ids`。检索范围（`kb_ids`/`topK`/`scoreThreshold`）经 LangGraph `InjectedState` 从图状态注入，对 LLM 不可见，避免改写用户消息。
-
-### 4. Langfuse 全链路追踪
-
-LLM 调用经 `CallbackHandler` 自动产生 trace；`langfuse_session_id` / `langfuse_user_id` / `langfuse_tags` 挂在 trace 级（会话、用户、Agent 维度可聚合）。支持 Langfuse Cloud 或本地自托管（`docker-compose.yml` 中 `local-langfuse` profile）。
-
-### 5. 阿里云精简部署
-
-- **Docker 只跑基础设施**：PostgreSQL/pgvector（必选）、Ollama（可选本地 embedding）、Langfuse 自托管（可选）。
-- **embedding / LLM 走外部 API**（默认 SiliconFlow `BAAI/bge-m3` 与 DeepSeek），无本地模型与磁盘开销。
-- **nginx 反代前端 + systemd 托管三进程**，前端 `apiBase` 抽离到 `config.js`，生产默认同源。
-- 已移除监控三件套与在线评估模块，最小化服务器资源占用。
-
----
-
-## 🏗️ 架构设计
-
-### 三层架构
-
-```
-前端控制台 (frontend/)                    端口 5174
-  ├─ /api/v1/auth/*              认证：注册/登录/当前用户（区分管理员与普通用户）
-  ├─ /api/v1/admin/platform/*    平台管理：Agent 配置 + 知识库/文档/入库任务代理
-  └─ /api/v1/agents/*            普通用户：调用已发布 Agent（流式）
-        │
-        ▼
-主后端 control-plane (app/)               端口 8000
-  ├─ api/                REST 路由层（薄壳，只做参数校验与转发）
-  ├─ services/           业务服务层：LLM 路由 / Agent 配置 / knowledge 代理 / 数据库
-  ├─ core/langgraph/     Agent 执行引擎：状态图（agent ⇄ tools）+ 动态工具
-  ├─ models/ + schemas/  数据库表（SQLModel）+ API 契约（Pydantic）
-  └─ utils/              通用工具：JWT / 消息处理 / 数据净化
-        │  X-KB-Service-Token（服务间认证）
-        ▼
-知识库微服务 (services/knowledge_service/)  端口 8010
-  ├─ 文档上传 → 解析 → 切片 → embedding → 入库任务（状态机）
-  └─ 可插拔检索算法（vector/weighted/hybrid/keyword/fulltext/keyword_rank，向量类支持 rerank 变体）
+```text
+浏览器
+  │
+  ▼
+frontend/                         http://127.0.0.1:5174
+  │
+  ▼
+app/ 主后端                       http://127.0.0.1:8000
+  │  X-KB-Service-Token
+  ▼
+services/knowledge_service/       http://127.0.0.1:8010
+  │
+  ▼
+PostgreSQL + pgvector             localhost:5432
 ```
 
-### 核心数据流
+## 项目结构
 
-1. **平台管理员**在控制台创建知识库、上传文档（解析 + 切片 + embedding + 入库任务记录），配置 Agent（模型、角色、工具开关、知识库绑定、检索算法、联网兜底）并发布。
-2. **普通用户**选择已发布 Agent 发起对话，主后端读取 Agent 配置。
-3. Agent 启用知识库时，LLM 通过 `knowledge_base_search` **工具按需检索**——检索参数经 `InjectedState` 注入，`kb_id` 可由 LLM 自选。
-4. LangGraph 状态图（agent ⇄ tools 循环）驱动多轮对话，PostgreSQL Checkpoint 持久化状态，支持 HITL 中断（如邮件审批）。
-
----
-
-## 🧰 动态工具箱
-
-按 Feature Flag 动态挂载（`all_tools_map`）：
-
-| Feature Flag | 工具 | 说明 |
-|---|---|---|
-| `web_search` | AnySearch 搜索 | 无 Key 降级 DuckDuckGo |
-| `knowledge_base` | KnowledgeBaseSearch | 按 Agent 绑定 kbIds 检索 |
-| `memory_tools` | SaveMemory + SearchMemory | 长期记忆 |
-| `email_assistant` | PrepareEmail + SendEmail | HITL 审批中断 |
-| `code_interpreter` | Python REPL | 可选依赖 `langchain-experimental` |
-
----
-
-## 🛠️ 快速开始
-
-```bash
-git clone https://github.com/Xzcgod/FastGraph-Agent-Engine.git
-cd FastGraph-Agent-Engine
-git checkout slim-deploy
-
-# 复制环境变量模板
-cp .env.example .env.development
+```text
+ST-Agent/
+├─ app/                              主后端
+│  ├─ api/                           FastAPI 接口：认证、会话、Agent 和平台管理
+│  ├─ core/langgraph/                LangGraph 状态图与 Agent 工具
+│  ├─ models/                        SQLModel 数据模型
+│  ├─ schemas/                       请求与响应数据结构
+│  ├─ services/                      数据库、LLM、Agent 和知识库代理服务
+│  └─ utils/                         JWT、数据清理等通用功能
+├─ frontend/                         管理员控制台和普通用户调用页面
+├─ services/
+│  ├─ knowledge_service/             独立知识库微服务
+│  └─ evaluation_service/            检索评估代码与示例文档数据
+├─ scripts/                          本地服务管理、批量入库和辅助脚本
+├─ test/
+│  ├─ scripts/                       三个模块的 pytest 自动化测试
+│  ├─ requirements.txt               测试附加依赖
+│  ├─ run_all.cmd                    一键运行全部测试
+│  └─ 测试用例_*.xlsx                小组成员测试用例清单
+├─ docs/                             架构、部署等补充文档
+├─ docker-compose.yml                PostgreSQL/pgvector 等基础设施
+├─ pyproject.toml                    Python 项目与依赖配置
+└─ .env.example                      环境变量模板
 ```
 
-按需填入 DeepSeek API Key、SiliconFlow embedding Key、Langfuse Key、邮箱授权码等，然后本地混合启动（Docker 跑基础设施，三层代码跑宿主机）：
+主要功能包括：
+
+- 用户注册、登录、JWT 身份认证、管理员权限和会话管理；
+- Agent 创建、修改、发布、下线、功能开关和知识库绑定；
+- PDF、Markdown、TXT、CSV、JSON、HTML 等文档上传与目录入库；
+- 文档解析、元数据提取、文本切分、Embedding 和 pgvector 检索；
+- `vector`、`weighted`、`hybrid`、`keyword`、`fulltext`、`keyword_rank` 等检索策略；
+- LangGraph 多轮对话。
+
+## 环境要求
+
+Docker 运行 PostgreSQL/pgvector，三个应用服务运行在宿主机。
+
+- Python 3.13 或更高版本；
+- [uv]；
+- Docker Desktop，且 Docker Engine 已启动；
+- 可用的 DeepSeek/OpenAI 兼容接口；
+- 可用的 Embedding 接口，例如 SiliconFlow，或者本地 Ollama。
+
+## 环境配置
+
+###  安装项目依赖
+
+在项目根目录打开 PowerShell：
 
 ```powershell
-scripts\start-docker.cmd   # PostgreSQL/pgvector（可选：ollama / langfuse 自托管）
-scripts\start-local.cmd    # knowledge-service、主后端、前端
+uv sync
 ```
 
-访问地址：前端控制台 http://127.0.0.1:5174 · API 文档 http://localhost:8000/docs
+该命令会根据 `pyproject.toml` 和 `uv.lock` 创建或更新 `.venv` 虚拟环境。
 
-> 只重启某个本地服务：`scripts\manage-local.cmd restart -Service backend`（`backend`/`knowledge-service`/`frontend`）。
+###  创建开发环境配置
 
----
+```powershell
+Copy-Item .env.example .env.development
+```
 
-## 🌐 线上部署（阿里云轻量服务器）
+然后编辑 `.env.development`。不要把真实密码、Token 或 API Key 提交到 Git。
 
-生产环境已部署于阿里云轻量服务器，实际访问地址：
+至少要检查以下配置：
 
-- **控制台**：http://47.122.117.96/
-- **部署说明**：`docs/部署-阿里云轻量服务器.md`
+| 配置类别 | 关键变量 | 用途 |
+| --- | --- | --- |
+| 管理员 | `PLATFORM_ADMIN_EMAILS` | 白名单内邮箱登录后拥有平台管理权限 |
+| 数据库 | `POSTGRES_HOST`、`POSTGRES_PORT`、`POSTGRES_DB`、`POSTGRES_USER`、`POSTGRES_PASSWORD` | 主后端连接 PostgreSQL |
+| JWT | `JWT_SECRET_KEY`、`JWT_ALGORITHM` | 生成和校验登录令牌 |
+| 知识库通信 | `KNOWLEDGE_SERVICE_BASE_URL`、`KNOWLEDGE_SERVICE_TOKEN` | 主后端访问知识库微服务；两端 Token 必须一致 |
+| Embedding | `KNOWLEDGE_EMBEDDING_BASE_URL`、`KNOWLEDGE_EMBEDDING_API_KEY`、`KNOWLEDGE_EMBEDDING_MODEL` | 文档向量化和语义检索 |
+| LLM | `OPENAI_BASE_URL`、`OPENAI_API_KEY`、`DEFAULT_LLM_MODEL` | Agent 对话模型，项目使用 OpenAI 兼容接口 |
+| 可选能力 | `LANGFUSE_*`、`ANYSEARCH_*`、`EMAIL_*`、`KNOWLEDGE_RERANKER_*` | 链路追踪、联网搜索、邮件和重排模型 |
 
-生产运行在 `slim-deploy` 分支，形态为：Docker 仅跑 PostgreSQL/pgvector 等基础设施，embedding/LLM 走外部 API，前端由 nginx 反代，三进程由 systemd 托管。已移除监控三件套与在线评估模块。
+本地默认服务地址建议保持为：
 
----
+```env
+POSTGRES_HOST=127.0.0.1
+POSTGRES_PORT=5432
+KNOWLEDGE_SERVICE_BASE_URL=http://127.0.0.1:8010
+ALLOWED_ORIGINS=http://localhost:5174,http://127.0.0.1:5174,http://localhost:8000
+```
 
-## 📚 项目文档
+## 本地运行
 
-- 📌 三层架构与本地混合开发：`docs/三层架构本地开发.md`
-- 📌 检索算法与评估设计：`services/evaluation_service/retrieval_eval_design.md`
-- 📖 各目录结构说明：`app/README.md`、`services/README.md` 及各自子目录
+###  启动数据库
 
----
+确保 Docker Desktop 已经运行，然后在项目根目录执行：
 
-## 🙏 致谢
+```powershell
+scripts\start-docker.cmd
+```
 
-本项目基于 [tring-yu/FastGraph-Agent-Engine](https://github.com/tring-yu/FastGraph-Agent-Engine) 二次开发，感谢原项目的贡献。
+该脚本启动 PostgreSQL/pgvector，数据库数据保存在 Docker 的 `postgres-data` 数据卷中。
 
-## 📜 许可证
+###  启动三个本地服务
 
-本项目采用 MIT 许可证开源 - 详情请查看 LICENSE 文件。
+```powershell
+scripts\start-local.cmd
+```
+
+脚本会依次启动：
+
+| 服务 | 地址 |
+| --- | --- |
+| 前端控制台 | http://127.0.0.1:5174 |
+| 主后端及 API 文档 | http://127.0.0.1:8000/docs |
+| 知识库服务健康检查 | http://127.0.0.1:8010/health |
+
+查看运行状态：
+
+```powershell
+scripts\manage-docker.cmd status
+scripts\manage-local.cmd status
+```
+
+只重启一个服务：
+
+```powershell
+scripts\manage-local.cmd restart -Service backend
+scripts\manage-local.cmd restart -Service knowledge-service
+scripts\manage-local.cmd restart -Service frontend
+```
+
+停止项目：
+
+```powershell
+scripts\stop-local.cmd
+scripts\stop-docker.cmd
+```
+
+本地服务的 PID 和日志保存在 `.runtime/local-services/`。
+
+## 基本使用流程
+
+1. 使用 `PLATFORM_ADMIN_EMAILS` 中配置的邮箱注册或登录。
+2. 在“知识库”页面创建知识库并上传文档。
+3. 在“入库任务”中确认任务状态为 `completed`，并在“搜索预览”中验证检索结果。
+4. 在“Agent 配置”页面创建 Agent，设置模型、角色说明和功能开关。
+5. 勾选“启用检索”，绑定处于 `active` 状态的知识库，配置 `Top K` 和最低分数。
+6. 保存并发布 Agent。
+7. 普通用户在“用户调用”页面选择已发布的 Agent，创建会话并进行对话。
+
+项目中提供两组可用于知识库练习和检索评估的 Markdown 文档：
+
+```text
+services/evaluation_service/data/policies/          政策文档
+services/evaluation_service/data/customer_service/ 客户服务文档
+```
+
+可以在知识库页面选择“文档上传 → 目录”，直接选择对应目录进行入库。全量导入前建议先上传一个文件，确认解析、Embedding 和检索链路正常。
+
+## 测试工作说明
+
+课程模块一任务测试聚焦项目中的非AI基础功能，不评价模型回答的质量，也不会在测试中真实调用 LLM。外部数据库、网络和服务依赖主要通过 Mock、Stub 和 `monkeypatch` 隔离，使测试能够快速、重复运行。
+
+小组三名成员按以下模块分工：
+
+| 成员 | 测试模块 | 自动化测试文件 | 当前测试函数数 |
+| --- | --- | --- | ---: |
+| 李怀宇 | 用户认证、权限与会话管理 | `test/scripts/test_auth_lihuaiyu.py` | 17 |
+| 罗盛哲 | 知识库文档管理与预处理 | `test/scripts/test_knowledge_luoshengzhe.py` | 21 |
+| 马云飞 | Agent 配置与生命周期管理 | `test/scripts/test_agent_mayunfei.py` | 15 |
+| 合计 | 3 个非AI基础功能模块 | 3 个测试文件 | 53 |
+
+当前测试内容主要包括：
+
+- 认证模块：注册与登录校验、密码规则、重复邮箱、JWT、管理员权限、会话创建和邮箱规范化；
+- 知识库模块：服务间认证、知识库创建与归档、名称和命名空间校验、分页、文件编码、Markdown/YAML 元数据提取、文件类型和文本切分；
+- Agent 模块：Agent 编码和状态校验、知识库绑定、版本更新、发布与下线、公开列表过滤及接口限流配置。
+
+三名成员的详细测试设计分别保存在：
+
+```text
+test/测试用例_李怀宇.xlsx
+test/测试用例_罗盛哲.xlsx
+test/测试用例_马云飞.xlsx
+```
+
+## 运行测试
+
+### 一键运行全部测试
+
+在项目根目录执行：
+
+```powershell
+test\run_all.cmd
+```
+
+脚本会自动读取 `test/requirements.txt`，并执行 `test/scripts` 下的全部 pytest 测试。也可以在文件资源管理器中双击 `test\run_all.cmd`。
+
+### 单独运行某个成员的测试
+
+```powershell
+# 用户认证、权限与会话管理
+uv run --with-requirements test/requirements.txt python -m pytest test/scripts/test_auth_lihuaiyu.py -v --tb=short -p no:cacheprovider
+
+# 知识库文档管理与预处理
+uv run --with-requirements test/requirements.txt python -m pytest test/scripts/test_knowledge_luoshengzhe.py -v --tb=short -p no:cacheprovider
+
+# Agent 配置与生命周期管理
+uv run --with-requirements test/requirements.txt python -m pytest test/scripts/test_agent_mayunfei.py -v --tb=short -p no:cacheprovider
+```
+
+### 运行指定测试用例
+
+```powershell
+uv run --with-requirements test/requirements.txt python -m pytest test/scripts/test_auth_lihuaiyu.py::test_st_auth_017_email_case_is_normalized -v
+```
+
+测试完成后，pytest 会在终端显示 `passed`、`failed` 和错误堆栈。若一键脚本返回非零退出码，应根据失败用例名称和错误信息定位问题。
