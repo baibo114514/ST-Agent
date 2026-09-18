@@ -198,10 +198,14 @@ class AITestClient:
         kb_ids = [str(item).strip() for item in knowledge.get("kbIds", []) if str(item).strip()]
         assert len(kb_ids) == 1, f"统一测试要求只绑定一个政策知识库，当前绑定：{kb_ids}"
         self.kb_id = kb_ids[0]
-        assert int(knowledge.get("topK")) == self.expected_top_k, (
+        top_k_value = knowledge.get("topK")
+        assert top_k_value is not None, "统一测试 Agent 缺少 knowledge.topK 配置"
+        assert int(top_k_value) == self.expected_top_k, (
             f"Top K 不一致：期望 {self.expected_top_k}，实际 {knowledge.get('topK')}"
         )
-        actual_threshold = float(knowledge.get("scoreThreshold"))
+        threshold_value = knowledge.get("scoreThreshold")
+        assert threshold_value is not None, "统一测试 Agent 缺少 knowledge.scoreThreshold 配置"
+        actual_threshold = float(threshold_value)
         assert abs(actual_threshold - self.expected_score_threshold) < 1e-9, (
             f"最低分数不一致：期望 {self.expected_score_threshold}，实际 {actual_threshold}"
         )
