@@ -1,7 +1,7 @@
 @echo off
 setlocal
 chcp 65001 >nul
-cd /d "%~dp0\.."
+cd /d "%~dp0.."
 
 set "AI_TEST_ENV_FILE=%~dp0.env.local"
 if exist "%AI_TEST_ENV_FILE%" (
@@ -10,23 +10,23 @@ if exist "%AI_TEST_ENV_FILE%" (
     )
 ) else (
     echo [WARN] Local test config was not found: %AI_TEST_ENV_FILE%
+    echo [WARN] Copy test_ai\.env.example to test_ai\.env.local first.
 )
 
 where uv >nul 2>nul
 if errorlevel 1 (
-    echo [ERROR] uv was not found. Install uv and retry.
+    echo [ERROR] uv was not found. Install uv and add it to PATH first.
     exit /b 1
 )
 
-echo Running tests...
-uv run --with-requirements test_ai/requirements.txt python -m pytest test_ai/scripts -v --tb=short -p no:cacheprovider
-set TEST_EXIT_CODE=%ERRORLEVEL%
+echo [INFO] Running ST-Agent module 2 AI tests...
+uv run --with-requirements test_ai\requirements.txt python -m pytest test_ai\scripts -v --tb=short -p no:cacheprovider --strict-markers
+set "test_exit_code=%errorlevel%"
 
-if not "%TEST_EXIT_CODE%"=="0" (
-    echo.
-    echo Tests failed. Review the output above.
-    exit /b %TEST_EXIT_CODE%
+if not "%test_exit_code%"=="0" (
+    echo [ERROR] AI tests failed. Review the failed case output above.
+) else (
+    echo [OK] All AI tests passed.
 )
 
-echo.
-exit /b 0
+exit /b %test_exit_code%
