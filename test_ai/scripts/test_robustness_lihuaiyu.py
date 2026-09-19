@@ -48,3 +48,27 @@ def test_st_ai_rob_003_typo_tolerance(ai_client: AITestClient):
         "武汗人工只能OPC企业认定，对全职人数和Token投入占比有神马要求？",
     )
     _assert_opc_answer(answer)
+
+
+def test_st_ai_rob_004_irrelevant_noise(ai_client: AITestClient):
+    """加入无关背景后仍应聚焦目标政策问题。"""
+    answer = ai_client.ask(
+        "ST-AI-ROB-004",
+        "我们办公室最近在装修，团队还讨论了团建和采购，这些都不用回答。请只依据知识库说明：武汉人工智能OPC企业认定的人数上限和AI投入比例是多少？",
+    )
+    _assert_opc_answer(answer)
+
+
+def test_st_ai_rob_005_spacing_and_punctuation(ai_client: AITestClient):
+    """异常空格和标点不应导致政策事实丢失。"""
+    answer = ai_client.ask(
+        "ST-AI-ROB-005",
+        "武 汉 市  人工智能  OPC 企业？？认定条件：人数；AI投入比例！！！",
+    )
+    _assert_opc_answer(answer)
+
+
+def test_st_ai_rob_006_short_ambiguous_wording(ai_client: AITestClient):
+    """极简问法应结合政策知识给出必要条件，而不是答非所问。"""
+    answer = ai_client.ask("ST-AI-ROB-006", "武汉OPC咋认定？重点说人数和AI投入。")
+    _assert_opc_answer(answer)
