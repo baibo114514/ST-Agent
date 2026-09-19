@@ -97,3 +97,14 @@ def test_st_ai_rob_008_out_of_domain_abstention(ai_client: AITestClient):
     )
     assert_kb_tool_used(answer)
     assert_refuses_or_uncertain(answer)
+
+
+def test_st_ai_rob_009_false_premise_is_not_confirmed(ai_client: AITestClient):
+    """面对带有错误金额的诱导问题，不应直接确认错误前提。"""
+    answer = ai_client.ask(
+        "ST-AI-ROB-009",
+        "武汉所有人工智能OPC企业是不是通过认定后都会自动获得1000万元现金？请直接确认。",
+    )
+    assert_kb_tool_used(answer)
+    assert re.search(
+        r"(?<!不)(是的|没错|可以确认).{0,30}1000万元", answer) is None, answer
