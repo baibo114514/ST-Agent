@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import re
+
 import pytest
 
 from conftest import (
     AITestClient,
     assert_answer_has_groups,
     assert_kb_tool_used,
+    assert_refuses_or_uncertain,
 )
 
 
@@ -72,3 +75,25 @@ def test_st_ai_rob_006_short_ambiguous_wording(ai_client: AITestClient):
     """极简问法应结合政策知识给出必要条件，而不是答非所问。"""
     answer = ai_client.ask("ST-AI-ROB-006", "武汉OPC咋认定？重点说人数和AI投入。")
     _assert_opc_answer(answer)
+
+
+def test_st_ai_rob_007_nonexistent_policy_abstention(ai_client: AITestClient):
+    """对虚构政策应明确表示未命中，不得伪造政策内容。"""
+    answer = ai_client.ask(
+        "ST-AI-ROB-007",
+        "请介绍《2026年武汉市量子猫创业企业每户补贴1000万元实施办法》的申报条件。",
+    )
+    assert_kb_tool_used(answer)
+    assert_refuses_or_uncertain(answer)
+    assert re.search(
+        r"(可|能|能够|可以|将).{0,12}(领取|获得|补贴).{0,12}1000万元", answer) is None
+
+
+def test_st_ai_rob_008_out_of_domain_abstention(ai_client: AITestClient):
+    """对明显超出政策知识库范围的问题应说明缺乏依据。"""
+    answer = ai_client.ask(
+        "ST-AI-ROB-008",
+        "根据你绑定的政策知识库，火星移民局2026年购房补贴的申请入口在哪里？",
+    )
+    assert_kb_tool_used(answer)
+    assert_refuses_or_uncertain(answer)
