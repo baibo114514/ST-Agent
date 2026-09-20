@@ -26,6 +26,18 @@ def _assert_opc_answer(answer: str) -> None:
     assert_answer_has_groups(answer, OPC_FACTS)
 
 
+def _session_history(ai_client: AITestClient, session_id: str, token: str) -> list:
+    """读取会话历史（返回原始消息列表，用于核对本轮问答是否被记入该会话）。"""
+    response = ai_client.http.get(
+        f"/api/v1/sessions/{session_id}/history",
+        headers=AITestClient._bearer(token),
+    )
+    assert response.is_success, (
+        f"读取会话 {session_id} 的历史失败：HTTP {response.status_code}\n{response.text[:500]}"
+    )
+    return response.json()
+
+
 def test_st_ai_rob_001_standard_policy_question(ai_client: AITestClient):
     """标准问法应正确回答武汉人工智能 OPC 企业认定核心条件。"""
     answer = ai_client.ask(
@@ -127,3 +139,36 @@ def test_st_ai_rob_010_multiturn_followup_keeps_context(ai_client: AITestClient)
             "那它对企业全职人数和人工智能投入比例分别有什么要求？",
         )
     _assert_opc_answer(second)
+
+
+def test_st_ai_rob_011_user_token_is_not_a_session_token(ai_client: AITestClient):
+    """用户级 token 不得当作会话 token 调用对话接口，否则对话会脱离会话（会话隔离失效）。"""
+    with ai_client.conversation("ST-AI-ROB-011") as (session_id, session_token):
+        # 对照组：合法会话 token 发起的对话，必须落在本会话的历史里
+        ai_client.chat(
+            "ST-AI-ROB-011-1",
+            session_id,
+            session_token,
+            "请依据知识库说明武汉市人工智能OPC企业认定对全职从业人员数量的要求。",
+        )
+        baseline = _session_history(ai_client, session_id, session_token)
+        assert baseline, "对照组失败：会话级 token 完成一轮对话后，会话历史仍为空"
+
+        # 实验组：误用登录返回的用户级 token 调用同一个已发布 Agent
+        response = ai_client.http.post(
+            f"/api/v1/agents/{ai_client.agent_id}/chat/stream",
+            headers={
+                **AITestClient._bearer(ai_client.user_token), "Content-Type": "application/json"},
+            json={"messages": [
+                {"role": "user", "content": "那人工智能投入比例要求是多少？"}]},
+        )
+        after = _session_history(ai_client, session_id, session_token)
+
+    assert response.status_code in {401, 403}, (
+        "对话接口未校验 token 类型：用户级 token（JWT sub=用户ID）被当作会话 token 接受。"
+        f"HTTP {response.status_code}；本轮问答被写入 thread_id=<用户ID> 的匿名线程，"
+        f"会话 {session_id} 的历史条数保持在 {len(baseline)} 条（误用后 {len(after)} 条），"
+        "即用用户 token 发起的对话无法通过会话历史接口读取，客户端刷新后本轮问答丢失；"
+        "若客户端持续误用用户 token，多轮对话会在同一匿名线程内累积，导致不同会话相互串话。\n"
+        f"实际回答前 200 字：{response.text[:200]}"
+    )
