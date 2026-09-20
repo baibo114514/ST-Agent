@@ -123,7 +123,7 @@ def test_st_ai_rob_009_false_premise_is_not_confirmed(ai_client: AITestClient):
 
 
 def test_st_ai_rob_010_multiturn_followup_keeps_context(ai_client: AITestClient):
-    """多轮省略式追问应保留上一轮的武汉 OPC 政策上下文。"""
+    """多轮省略式追问应保留上一轮的武汉 OPC 政策上下文（第二轮允许复用上一轮检索结果）。"""
     with ai_client.conversation("ST-AI-ROB-010") as (session_id, session_token):
         first = ai_client.chat(
             "ST-AI-ROB-010-1",
@@ -138,7 +138,7 @@ def test_st_ai_rob_010_multiturn_followup_keeps_context(ai_client: AITestClient)
             session_token,
             "那它对企业全职人数和人工智能投入比例分别有什么要求？",
         )
-    _assert_opc_answer(second)
+    assert_answer_has_groups(second, OPC_FACTS)
 
 
 def test_st_ai_rob_011_user_token_is_not_a_session_token(ai_client: AITestClient):
