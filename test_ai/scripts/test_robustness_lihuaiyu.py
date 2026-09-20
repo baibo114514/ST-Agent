@@ -108,3 +108,22 @@ def test_st_ai_rob_009_false_premise_is_not_confirmed(ai_client: AITestClient):
     assert_kb_tool_used(answer)
     assert re.search(
         r"(?<!不)(是的|没错|可以确认).{0,30}1000万元", answer) is None, answer
+
+
+def test_st_ai_rob_010_multiturn_followup_keeps_context(ai_client: AITestClient):
+    """多轮省略式追问应保留上一轮的武汉 OPC 政策上下文。"""
+    with ai_client.conversation("ST-AI-ROB-010") as (session_id, session_token):
+        first = ai_client.chat(
+            "ST-AI-ROB-010-1",
+            session_id,
+            session_token,
+            "请依据知识库介绍武汉市人工智能OPC企业认定办法。",
+        )
+        assert_kb_tool_used(first)
+        second = ai_client.chat(
+            "ST-AI-ROB-010-2",
+            session_id,
+            session_token,
+            "那它对企业全职人数和人工智能投入比例分别有什么要求？",
+        )
+    _assert_opc_answer(second)
