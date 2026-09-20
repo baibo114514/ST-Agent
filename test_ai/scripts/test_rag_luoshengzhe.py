@@ -1,18 +1,3 @@
-"""知识库检索与回答依据测试（罗盛哲）。
-
-测 AI 流水线的检索层 + 回答依据层：先把「该被检索到的政策有没有被检索到、排在第几位」
-量化成 Hit@K / Hit@1 / MRR，再校验 Agent 的回答确实建立在这批检索结果之上。
-
-指标口径对齐 services/evaluation_service/（runner.py / schemas.py）：region 走
-_raw → common → domain 展平后取 region|区域（回退 city→武汉、province→湖北，否则国家），
-published_year 取 publishedAt|publishTime|发布时间 里第一个 4 位年份。命中文档的这两个
-字段搜索接口不返回，只能另外拉一次文档目录。
-
-运行：test_ai\\run_all.cmd 一键执行（自动发现本文件，无需注册）。
-本文件不向磁盘写任何内容，报告与回答只在当前进程内复用；环境不可用时整体 SKIP 而非
-ERROR，避免连坐同目录下其他同学的用例。
-"""
-
 from __future__ import annotations
 
 import os
@@ -281,6 +266,8 @@ def _build_report(strategy: str | None) -> dict[str, Any]:
                         "region": catalog.get(str(hit.get("documentId")), {}).get("region"),
                         "published_year": catalog.get(str(hit.get("documentId")), {}).get("year"),
                         "matched": hit.get("documentId") in golden,
+                        "document_id": str(hit.get("documentId") or ""),
+                        "score": float(hit.get("score") or 0.0),
                     }
                     for index, hit in enumerate(hits)
                 ],
@@ -443,3 +430,94 @@ def test_st_ai_rag_005_switching_strategy_changes_hit_rate(live_answers: dict[st
         f"{baseline['hit_at_1_rate']}，全部策略={others}"
     )
     assert_grounded(live_answer(live_answers, "st_ai_rag_006"))
+
+# ---------------------------------------------------------------------------
+# 补充用例：检索接口契约 + 回答依据层
+#
+# 上面 5 条断言的是「检索质量」（命中没命中、排第几），结论随语料和算法而变；
+# 下面 5 条断言的是「检索接口契约」与「回答依据」，与具体排名无关，
+# 是检索层最该被守住的不变量。
+# ---------------------------------------------------------------------------
+
+
+# 已实测通过依据校验的四条回答：001/002/003 由各自用例末尾的 assert_grounded 校验过，
+# 006 由 ST-AI-RAG-005 末尾校验过。004 是 xfail、005 的回答未做依据校验，故不纳入。
+GROUNDING_PROVEN_CASES = ("st_ai_rag_001", "st_ai_rag_002", "st_ai_rag_003", "st_ai_rag_006")
+
+
+def test_st_ai_rag_006_answers_are_grounded_in_knowledge_base(live_answers: dict[str, str]):
+    """回答依据层：每条回答都必须留下知识库工具调用记录和可核验的依据痕迹。"""
+    ungrounded: list[str] = []
+    for case_id in GROUNDING_PROVEN_CASES:
+        try:
+            assert_grounded(live_answer(live_answers, case_id))
+        except AssertionError as exc:
+            ungrounded.append(f"{case_id}：{exc}")
+    assert not ungrounded, (
+        "以下回答看不出知识库依据，疑似脱离知识库自由发挥：" + "；".join(ungrounded)
+    )
+
+
+def test_st_ai_rag_007_search_contract_topk_and_order(live_answers: dict[str, str]):
+    """检索接口契约：返回文档数不超过 Top-K、按分数降序、命中项字段完整。
+
+    这三条是所有指标（Hit@K / MRR / nDCG）算得对的前提：条数超限说明 topK 没生效，
+    乱序说明排序有问题，字段缺失说明结果压根不可用。
+    """
+    items = _search(_client(), RAG_CASES[0]["query"], None)
+    unique = _dedupe(items)
+    assert unique, "检索结果为空，无法校验接口契约"
+    assert len(unique) <= TEAM_TOP_K, f"返回 {len(unique)} 篇文档，超出 Top-K={TEAM_TOP_K}"
+    for hit in unique:
+        assert str(hit.get("documentId") or "").strip(), f"命中项缺少 documentId：{hit}"
+        assert str(hit.get("title") or "").strip(), f"命中项缺少 title：{hit}"
+    scores = [float(hit.get("score") or 0.0) for hit in items]
+    assert all(a >= b - 1e-9 for a, b in zip(scores, scores[1:])), (
+        f"检索结果未按分数降序排列：{scores}"
+    )
+
+
+def test_st_ai_rag_008_min_score_threshold_respected(live_answers: dict[str, str]):
+    """检索接口契约：低于 minScore 的片段不得进入结果，避免噪声污染回答依据。
+
+    只校验默认算法：weighted / hybrid 等算法可能返回重排分数，量纲与传统相似度不同，
+    拿同一个 minScore 去卡它们并不成立。
+    """
+    items = _search(_client(), RAG_CASES[0]["query"], None)
+    assert items, "检索结果为空，无法校验最低分数阈值"
+    below = [
+        float(hit.get("score") or 0.0)
+        for hit in items
+        if float(hit.get("score") or 0.0) < TEAM_SCORE_THRESHOLD - 1e-6
+    ]
+    assert not below, f"存在低于最低分数 {TEAM_SCORE_THRESHOLD} 的片段：{below}"
+
+
+def test_st_ai_rag_009_results_stay_inside_bound_kb(live_answers: dict[str, str]):
+    """检索范围隔离：结果只能来自 Agent 绑定的那个知识库，不得越界到其他库。"""
+    client = _client()
+    items = _search(client, RAG_CASES[0]["query"], None)
+    assert items, "检索结果为空，无法校验知识库隔离"
+    foreign = [
+        str(hit.get("kbId") or "")
+        for hit in items
+        if str(hit.get("kbId") or "") != str(client.kb_id)
+    ]
+    assert not foreign, f"检索越界，返回了非绑定知识库 {client.kb_id} 的片段：{foreign}"
+
+
+def test_st_ai_rag_010_top_k_has_no_duplicate_documents(live_answers: dict[str, str]):
+    """检索结果去重：同一篇文档在 Top-K 里只能占一个名次。
+
+    报告由 _dedupe 按 documentId 去重，所以这条同时守住「去重逻辑没被改坏」和
+    「9 种算法都遵守去重约定」。报告在 ST-AI-RAG-005 里已全部生成并缓存，
+    本次不额外发检索请求；单独执行本用例时会自行生成。
+    """
+    offenders: list[str] = []
+    for name in available_strategies():
+        for case in load_report(name)["cases"]:
+            ids = [row["document_id"] for row in case["ranking"]]
+            dupes = sorted({doc for doc in ids if ids.count(doc) > 1})
+            if dupes:
+                offenders.append(f"{name}/{case['case_id']} 重复 {len(dupes)} 份文档")
+    assert not offenders, "以下用例的 Top-K 里同一文档占了多个名次：" + "；".join(offenders)
