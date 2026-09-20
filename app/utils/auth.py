@@ -77,7 +77,8 @@ def create_access_token(thread_id: str, expires_delta: Optional[timedelta] = Non
     if expires_delta:
         expire = datetime.now(UTC) + expires_delta
     else:
-        expire = datetime.now(UTC) + timedelta(days=settings.JWT_ACCESS_TOKEN_EXPIRE_DAYS)
+        expire = datetime.now(
+            UTC) + timedelta(days=settings.JWT_ACCESS_TOKEN_EXPIRE_DAYS)
 
     # 构建 JWT Payload
     to_encode = {
@@ -89,7 +90,8 @@ def create_access_token(thread_id: str, expires_delta: Optional[timedelta] = Non
     }
 
     # 编码 JWT
-    encoded_jwt = jwt.encode(to_encode, settings.JWT_SECRET_KEY, algorithm=settings.JWT_ALGORITHM)
+    encoded_jwt = jwt.encode(
+        to_encode, settings.JWT_SECRET_KEY, algorithm=settings.JWT_ALGORITHM)
     return Token(access_token=encoded_jwt, expires_at=expire)
 
 
@@ -112,7 +114,8 @@ def verify_token(token: str) -> Optional[str]:
     if not token or not isinstance(token, str):
         return None
     try:
-        payload = jwt.decode(token, settings.JWT_SECRET_KEY, algorithms=[settings.JWT_ALGORITHM])
+        payload = jwt.decode(token, settings.JWT_SECRET_KEY,
+                             algorithms=[settings.JWT_ALGORITHM])
         thread_id: str = payload.get("sub")
         return thread_id
     except JWTError as e:
@@ -130,8 +133,14 @@ async def verify_session_access(
     """
     验证会话访问权限 - FastAPI 依赖项。
 
-    从请求的 Authorization 头中提取 Token，验证其有效性，
-    并返回 Token 中的 session_id。
+    只接受「会话级 Token」：Token 的 sub 必须对应一个真实存在的会话，
+    校验通过后返回该会话的 session_id。
+
+    注意：登录/注册签发的用户级 Token（sub 为 user_id）与建会话签发的会话级
+    Token（sub 为 session_id）结构相同，此处必须查库确认 sub 是一个存在的会话，
+    否则用户级 Token 会被当作会话 ID 使用，导致对话落到不属于任何会话的线程
+    （会话历史查不到、多条会话共用同一线程互相串话）。会话被删除后，其旧
+    Token 也会随会话记录一起失效。
 
     用法：
         @router.post("/chat")
@@ -145,18 +154,19 @@ async def verify_session_access(
         str: 验证通过后的 session_id。
 
     Raises:
-        HTTPException(401): Token 无效或验证失败时抛出。
+        HTTPException(401): Token 无效、非会话级 Token 或会话不存在时抛出。
     """
     token = credentials.credentials
     session_id = verify_token(token)
+    session = await database_service.get_session(session_id) if session_id else None
 
-    if not session_id:
+    if not session:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Could not validate credentials",
+            detail="Could not validate session credentials",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    return session_id
+    return session.id
 
 
 async def get_current_user(
@@ -208,7 +218,8 @@ async def get_current_user(
                 return user
             else:
                 # 会话存在但用户被删除（数据不一致）
-                logger.error("session_found_but_user_missing", session_id=subject, user_id=session.user_id)
+                logger.error("session_found_but_user_missing",
+                             session_id=subject, user_id=session.user_id)
         else:
             # 会话不存在（可能是过期或被删除）
             logger.warning("session_not_found_in_db", session_id=subject)
@@ -231,7 +242,8 @@ async def require_platform_admin(user: User = Depends(get_current_user)) -> User
     本地开发阶段使用 PLATFORM_ADMIN_EMAILS 邮箱白名单。生产阶段可以将此处
     替换为 SSO/租户权限系统，但路由层依赖保持不变。
     """
-    allowed_emails = {email.lower() for email in settings.PLATFORM_ADMIN_EMAILS}
+    allowed_emails = {email.lower()
+                      for email in settings.PLATFORM_ADMIN_EMAILS}
     if user.email.lower() not in allowed_emails:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
