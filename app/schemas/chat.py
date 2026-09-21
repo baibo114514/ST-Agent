@@ -5,6 +5,7 @@
 
 消息模型：
     Message - 单条对话消息（user/assistant/system 角色）。
+    ClientMessage - 客户端消息（仅允许 user/assistant 角色）。
 
 功能开关：
     FeatureFlags - 前端控制 Agent 能力的开关集合（4 个功能）。
@@ -74,6 +75,12 @@ class Message(BaseModel):
         return v
 
 
+class ClientMessage(Message):
+    """客户端提交的对话消息；系统指令只能由服务端生成。"""
+
+    role: Literal["user", "assistant"] = Field(..., description="客户端消息角色，仅允许 user 或 assistant")
+
+
 class FeatureFlags(BaseModel):
     """
     Agent 功能开关 - 前端通过此字段控制 AI 的能力范围。
@@ -123,9 +130,9 @@ class ChatRequest(BaseModel):
     - 不传或传 null → 全部功能关闭（纯聊天模式）。
     - 传具体开关 → 只激活对应工具。
     """
-    messages: List[Message] = Field(
+    messages: List[ClientMessage] = Field(
         ...,
-        description="对话消息列表",
+        description="客户端对话消息列表，仅允许 user 和 assistant 角色",
         min_length=1  # 至少一条消息
     )
     features: Optional[FeatureFlags] = Field(
