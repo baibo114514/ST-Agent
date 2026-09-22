@@ -36,10 +36,18 @@ ST-Agent/
 │  ├─ knowledge_service/             独立知识库微服务
 │  └─ evaluation_service/            检索评估代码与示例文档数据
 ├─ scripts/                          本地服务管理、批量入库和辅助脚本
-├─ test/
-│  ├─ scripts/                       三个模块的 pytest 自动化测试
+├─ test/                             模块一：非AI基础功能测试
+│  ├─ scripts/                       三个成员的 pytest 自动化测试
 │  ├─ requirements.txt               测试附加依赖
-│  ├─ run_all.cmd                    一键运行全部测试
+│  ├─ run_all.cmd                    一键运行模块一测试
+│  └─ 测试用例_*.xlsx                小组成员测试用例清单
+├─ test_ai/                          模块二：AI 测试
+│  ├─ scripts/                       对已发布 Agent 的在线测试（conftest + 三份测试文件）
+│  ├─ defects/                       典型缺陷的说明与修复方法
+│  ├─ results/                       测试运行结果（latest.json，未入库）
+│  ├─ requirements.txt               测试附加依赖
+│  ├─ run_all.cmd                    一键运行模块二测试
+│  ├─ .env.example                   测试账号与统一测试配置模板
 │  └─ 测试用例_*.xlsx                小组成员测试用例清单
 ├─ docs/                             架构、部署等补充文档
 ├─ docker-compose.yml                PostgreSQL/pgvector 等基础设施
@@ -178,6 +186,10 @@ services/evaluation_service/data/customer_service/ 客户服务文档
 
 ## 测试工作说明
 
+课程测试分两个模块：模块一测试非AI基础功能，模块二测试 AI 流水线的实际行为。两个模块的测试脚本、依赖和运行入口各自独立，互不影响。
+
+### 模块一：非AI基础功能测试
+
 课程模块一任务测试聚焦项目中的非AI基础功能，不评价模型回答的质量，也不会在测试中真实调用 LLM。外部数据库、网络和服务依赖主要通过 Mock、Stub 和 `monkeypatch` 隔离，使测试能够快速、重复运行。
 
 小组三名成员按以下模块分工：
@@ -203,11 +215,39 @@ test/测试用例_罗盛哲.xlsx
 test/测试用例_马云飞.xlsx
 ```
 
+### 模块二：AI 测试
+
+课程模块二任务测试聚焦 AI 流水线的实际行为：直接调用平台上已发布的 Agent，评价回答的事实一致性、检索依据、拒答边界与会话安全。与模块一不同，这部分不做 Mock，需要真实启动数据库、后端、知识库微服务和可用的 LLM 接口，因此运行更慢，结果也依赖真实模型输出。
+
+测试对象统一为已发布的 Agent `policy-assistant`：绑定湖北省与武汉市政策知识库，Top K=5、最低分数 0.2，联网搜索、代码解释、长期记忆、邮件助手及知识库联网兜底全部关闭。配置不一致时 `conftest.py` 会在初始化阶段直接报错，避免用错误的配置得出无效结论。
+
+小组三名成员按以下模块分工：
+
+| 成员 | 测试模块 | 自动化测试文件 | 当前测试函数数 |
+| --- | --- | --- | ---: |
+| 李怀宇 | Agent 鲁棒性与无依据拒答、会话隔离 | `test_ai/scripts/test_robustness_lihuaiyu.py` | 11 |
+| 罗盛哲 | 知识库检索与回答依据 | `test_ai/scripts/test_rag_luoshengzhe.py` | 10 |
+| 马云飞 | 提示词注入与信息边界、公平性 | `test_ai/scripts/test_security_mayunfei.py` | 10 |
+| 合计 | 3 个 AI 测试模块 | 3 个测试文件 | 31 |
+
+当前测试内容主要包括：
+
+- 鲁棒性模块：口语化改写、错别字、无关噪声、格式扰动和极简问法下的事实一致性；虚构政策、域外问题与错误前提的拒答；多轮上下文保留；会话隔离与 Token 类型校验；
+- 检索模块：目标政策是否命中 Top-K、地区与时效排序、检索策略与最低分数的接口契约、结果去重与知识库范围隔离、回答是否留有可核验的知识库依据；
+- 安全与公平模块：直接注入、伪造开发者权限、引文内嵌指令和编码指令的防护，跨用户与密钥信息边界，客户端 `system` 角色的越权提升，以及性别、民族、婚姻状况、宗教等无关属性下结论的一致性。
+
+三名成员的详细测试设计分别保存在 `test_ai/测试用例_*.xlsx`；实际复现并定位的典型缺陷记录在 `test_ai/defects/`：
+
+```text
+test_ai/defects/ST-AI-RAG-004.md   # 检索时效性缺陷：默认检索算法对发布时间无偏好
+test_ai/defects/ST-AI-ROB-011.md   # 会话隔离缺陷：用户级 Token 被当作会话级 Token
+```
+
 ## 运行测试
 
 ### 一键运行全部测试
 
-在项目根目录执行：
+模块一（非AI基础功能），在项目根目录执行：
 
 ```powershell
 test\run_all.cmd
@@ -215,7 +255,17 @@ test\run_all.cmd
 
 脚本会自动读取 `test/requirements.txt`，并执行 `test/scripts` 下的全部 pytest 测试。也可以在文件资源管理器中双击 `test\run_all.cmd`。
 
+模块二（AI 测试）：
+
+```powershell
+test_ai\run_all.cmd
+```
+
+脚本会自动读取 `test_ai/.env.local`（可复制 `test_ai/.env.example` 修改），并执行 `test_ai/scripts` 下的全部 pytest 测试。运行前需保证数据库、后端和知识库微服务已启动，且使用平台管理员测试账号；测试会真实调用 LLM，单条用例通常需要 3～10 秒。
+
 ### 单独运行某个成员的测试
+
+模块一：
 
 ```powershell
 # 用户认证、权限与会话管理
@@ -228,10 +278,27 @@ uv run --with-requirements test/requirements.txt python -m pytest test/scripts/t
 uv run --with-requirements test/requirements.txt python -m pytest test/scripts/test_agent_mayunfei.py -v --tb=short -p no:cacheprovider
 ```
 
+模块二：
+
+```powershell
+# Agent 鲁棒性、无依据拒答与会话隔离
+uv run --with-requirements test_ai/requirements.txt python -m pytest test_ai/scripts/test_robustness_lihuaiyu.py -v --tb=short -p no:cacheprovider
+
+# 知识库检索与回答依据
+uv run --with-requirements test_ai/requirements.txt python -m pytest test_ai/scripts/test_rag_luoshengzhe.py -v --tb=short -p no:cacheprovider
+
+# 提示词注入、信息边界与公平性
+uv run --with-requirements test_ai/requirements.txt python -m pytest test_ai/scripts/test_security_mayunfei.py -v --tb=short -p no:cacheprovider
+```
+
 ### 运行指定测试用例
 
 ```powershell
+# 模块一
 uv run --with-requirements test/requirements.txt python -m pytest test/scripts/test_auth_lihuaiyu.py::test_st_auth_017_email_case_is_normalized -v
+
+# 模块二
+uv run --with-requirements test_ai/requirements.txt python -m pytest test_ai/scripts -k rob_011 -v --tb=short
 ```
 
 测试完成后，pytest 会在终端显示 `passed`、`failed` 和错误堆栈。若一键脚本返回非零退出码，应根据失败用例名称和错误信息定位问题。
